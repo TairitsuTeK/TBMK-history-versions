@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,34 +28,37 @@ jobs:
             make nasm gcc-multilib binutils \
             grub-pc-bin grub-common xorriso mtools zip
 
-      - name: Build all versions and pack release
-        run: make release
+      - name: Build all versions
+        run: make
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tbmk-release
-          path: |
-            dist/tbmk-sources.zip
-            dist/tbmk-images.zip
-            dist/BUILD-INFO.txt
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Publish release
+      - name: Publish one release per version
         if: github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          name: TBMK build ${{ github.run_number }}
-          body: |
-            Automated build of every TBMK history version.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r slug path tag title doc; do
+            [ -n "$tag" ] || continue
 
-            - Commit: `${{ github.sha }}`
-            - `tbmk-sources.zip`: complete source tree of this commit (78 versions, each with its Makefile)
-            - `tbmk-images.zip`: 76 bootable floppy images (`.img`), 2 GRUB ISOs, per-version `kernel.elf`, and `BUILD-INFO.txt`
-          files: |
-            dist/tbmk-sources.zip
-            dist/tbmk-images.zip
-            dist/BUILD-INFO.txt
-          fail_on_unmatched_files: true
+            assets=()
+            while IFS= read -r file; do
+              assets+=("$file")
+            done < <(find "dist/$slug" -maxdepth 1 -type f \
+              \( -name '*.img' -o -name '*.iso' -o -name 'kernel.elf' \) | sort)
+
+            src="dist/${slug}-src.zip"
+            rm -f "$src"
+            zip -q -r "$src" "$path"
+
+            files=("${assets[@]}" "$src" "$doc")
+
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release upload "$tag" "${files[@]}" --clobber
+              gh release edit "$tag" --title "$title" --notes-file "$doc"
+            else
+              gh release create "$tag" "${files[@]}" \
+                --title "$title" --notes-file "$doc"
+            fi
+            printf 'released %s\n' "$tag"
+            sleep 1
+          done < releases.tsv

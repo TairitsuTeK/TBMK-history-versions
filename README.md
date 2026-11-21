@@ -2,12 +2,12 @@
 
 [![build](https://github.com/TairitsuTeK/TBMK-history-versions/actions/workflows/build.yml/badge.svg)](https://github.com/TairitsuTeK/TBMK-history-versions/actions/workflows/build.yml)
 
-[TBMK（Tiny Bare-metal Micro Kernel）](https://github.com/TairitsuTeK) 历代版本的完整源码归档。仓库保留当年的目录结构，**每个版本目录都有自己的 Makefile，不存在任何 `.bat` / `.sh` 构建脚本**；GitHub Actions 负责全量编译，并在每次 push 到 `main` 时自动发布 Release，同时提供源码包与镜像包。
+[TBMK（Tiny Bare-metal Micro Kernel）](https://github.com/TairitsuTeK) 历代版本的完整源码归档。仓库保留当年的目录结构，**每个版本目录都有自己的 Makefile，不存在任何 `.bat` / `.sh` 构建脚本**；GitHub Actions 逐个版本编译，并为每个版本发布独立的 Release。
 
-- Release 资产：`tbmk-sources.zip`（全部版本源码）与 `tbmk-images.zip`（全部镜像）
-- 镜像包含 `os.img` / `TBMK.img` / `TMOS.img` 软盘镜像、`kernel.elf`，以及两个 Next 版本的 GRUB `.iso`
+- **一个版本一个 Release**，tag 形如 `console-neko-C1.2.716.726`
+- 每个 Release 附：该版本的镜像（`.img` / `.iso`）、`kernel.elf`、该版本的源码包、特色说明文档
+- 特色说明文档同时存放在 **[docs/releases/](docs/releases/)**，发布页：<https://github.com/TairitsuTeK/TBMK-history-versions/releases>
 - 每个版本的源码、类型与产物见 **[VERSIONS.md](VERSIONS.md)**
-- 发布页：<https://github.com/TairitsuTeK/TBMK-history-versions/releases>
 
 ## 版本谱系
 
@@ -32,11 +32,19 @@ TBMK 的版本号形如 `C1.2.884.727`：主版本 + 构建号 + 日期（7 月 
 `.github/workflows/build.yml` 在 push 到 `main`、PR 和手动触发时运行：
 
 1. 安装 `make`、`nasm`、`gcc-multilib`、`binutils`、GRUB 工具和 `zip`；
-2. 执行 `make release`：递归编译全部 78 个版本，并生成 `dist/tbmk-sources.zip` 与 `dist/tbmk-images.zip`；
-3. 上传 `tbmk-release` workflow artifact；
-4. 非 PR 构建会以 `build-<run_number>` 为 tag 创建 GitHub Release，附带上述两个压缩包与 `BUILD-INFO.txt`。
+2. 执行 `make`，把全部 78 个版本编译到 `dist/<版本目录>/`；
+3. 读取 `releases.tsv`，为每个版本创建或更新一个独立 Release。
 
-Release 里的 `tbmk-sources.zip` 是当前提交的完整源码树（78 个版本，每个都带 Makefile）；`tbmk-images.zip` 包含 76 个可启动软盘镜像、2 个 GRUB ISO，以及每个版本的 `kernel.elf`。任一版本编译失败都会让整个 workflow 失败。
+每个 Release 的资产：
+
+| 资产 | 内容 |
+| --- | --- |
+| 镜像 | 该版本的 `os.img` / `TBMK.img` / `TMOS.img`，或 GRUB `.iso` |
+| `kernel.elf` | 该版本的内核 ELF（纯汇编版本除外） |
+| `<tag>-src.zip` | 只包含该版本目录的源码包 |
+| `<tag>.md` | 该版本的特色说明文档（也是 Release 正文） |
+
+不再提供“全部版本打成一个压缩包”的发布方式。PR 构建只编译、不发布；推送到 `main` 会更新所有版本的 Release。
 
 ## 本地构建
 
@@ -60,8 +68,6 @@ Windows：安装 NASM、GNU Make 与 i686-elf 工具链，把它们的 `bin` 加
 
 ```bash
 make              # 编译所有版本到 dist/<版本目录>/
-make sources      # 把当前提交的全部源码打包为 dist/tbmk-sources.zip
-make release      # 编译并打包 dist/tbmk-sources.zip + dist/tbmk-images.zip
 make list         # 列出 78 个版本
 make clean        # 清理 dist/ 与本地 build/
 ```
@@ -111,7 +117,7 @@ qemu-system-i386 -cdrom pixel_neko.iso -hda disk.img -m 128M
 ## 验证情况
 
 - 本地（Windows + GNU Make + i686-elf-gcc 15.2，Git Bash shell）：**78/78 全部构建成功**；
-- GitHub Actions（Ubuntu + gcc-multilib）：**78/78 全部构建成功**，Release 同时包含源码包与镜像包；
+- GitHub Actions（Ubuntu + gcc-multilib）：**78/78 全部构建成功**，每个版本各自发布一个 Release；
 - 抽样 QEMU 冒烟测试（Kitten 1.2.62、Console 404/716、Pixel 984 等）：构建镜像与原始 `os.img` 的 VGA 文本/帧缓冲输出一致；
 - 未对所有版本做完整运行时回归：GUI 功能、FAT16 读写等需要人工在 QEMU 中测试。
 
@@ -124,9 +130,11 @@ Kitten Neko(1.2)/                纯汇编系列
 Pixel Neko Next(C2.0 Next)/      GRUB GUI 内核
 Pixel Neko(C2.0)/                GUI 系列
 STABLE/                          定版快照
-Makefile                         根构建入口（遍历所有版本并打包）
+Makefile                         根构建入口（遍历所有版本）
 */Makefile（含多级子目录）        每个版本自己的编译规则
-.github/workflows/build.yml      GitHub Actions：构建 + 发布 Release
+releases.tsv                     每个版本的 Release 清单（slug / 路径 / tag / 标题 / 说明）
+docs/releases/                   78 份版本特色说明 + 索引
+.github/workflows/build.yml      GitHub Actions：构建 + 逐版本发布 Release
 VERSIONS.md                      78 个版本清单
 ```
 
