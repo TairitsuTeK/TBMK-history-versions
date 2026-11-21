@@ -4,6 +4,7 @@
 - 构建工具链：`i686-elf-gcc` / `i686-elf-ld` / `nasm`（CI 为 `gcc -m32` + `ld`）
 - 结果：**78/78** 构建成功
 - 每个版本都有独立的 Release 与特色说明：[docs/releases/](docs/releases/)
+- Beta / Gamma / Delta 测试版同样发布，但标记为 Pre-release，不会成为 Latest
 
 ## 总览
 

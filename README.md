@@ -6,6 +6,7 @@
 
 - **一个版本一个 Release**，tag 形如 `console-neko-C1.2.716.726`
 - 每个 Release 附：该版本的镜像（`.img` / `.iso`）、`kernel.elf`、该版本的源码包、特色说明文档
+- **Beta / Gamma / Delta 测试版也会发布**，但会标记为 Pre-release，不会成为 Latest；Latest 保持为正式/稳定版本
 - 特色说明文档同时存放在 **[docs/releases/](docs/releases/)**，发布页：<https://github.com/TairitsuTeK/TBMK-history-versions/releases>
 - 每个版本的源码、类型与产物见 **[VERSIONS.md](VERSIONS.md)**
 
@@ -44,7 +45,7 @@ TBMK 的版本号形如 `C1.2.884.727`：主版本 + 构建号 + 日期（7 月 
 | `<tag>-src.zip` | 只包含该版本目录的源码包 |
 | `<tag>.md` | 该版本的特色说明文档（也是 Release 正文） |
 
-不再提供“全部版本打成一个压缩包”的发布方式。PR 构建只编译、不发布；推送到 `main` 会更新所有版本的 Release。
+Beta / Gamma / Delta 阶段的测试版同样会发布，但 Release 会标记为 **Pre-release**，因此 GitHub 的 Latest 只会指向正式/稳定版本。不再提供“全部版本打成一个压缩包”的发布方式。PR 构建只编译、不发布；推送到 `main` 会更新所有版本的 Release。
 
 ## 本地构建
 

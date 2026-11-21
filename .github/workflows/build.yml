@@ -37,7 +37,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          while IFS=$'\t' read -r slug path tag title doc; do
+          while IFS=$'\t' read -r slug path tag title doc prerelease; do
             [ -n "$tag" ] || continue
 
             assets=()
@@ -51,14 +51,28 @@ jobs:
             zip -q -r "$src" "$path"
 
             files=("${assets[@]}" "$src" "$doc")
+            pre_args=()
+            [ "$prerelease" = "1" ] && pre_args+=(--prerelease)
 
             if gh release view "$tag" >/dev/null 2>&1; then
               gh release upload "$tag" "${files[@]}" --clobber
               gh release edit "$tag" --title "$title" --notes-file "$doc"
             else
               gh release create "$tag" "${files[@]}" \
-                --title "$title" --notes-file "$doc"
+                --title "$title" --notes-file "$doc" "${pre_args[@]}"
             fi
-            printf 'released %s\n' "$tag"
+
+            # Keep the flag authoritative on updates too; Beta/Gamma/Delta
+            # releases are test builds and must never become "Latest".
+            release_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq .id)
+            if [ "$prerelease" = "1" ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                -F prerelease=true >/dev/null
+            else
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+                -F prerelease=false >/dev/null
+            fi
+
+            printf 'released %s (prerelease=%s)\n' "$tag" "$prerelease"
             sleep 1
           done < releases.tsv
