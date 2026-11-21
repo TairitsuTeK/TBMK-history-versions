@@ -1,76 +1,60 @@
-CC = gcc
-LD = ld
-NASM = nasm
-GRUB_MKRESCUE = grub-mkrescue
-QEMU = qemu-system-i386
+﻿# TBMK GRUB Multiboot kernel: ELF at 1 MB + ISO when grub-mkrescue exists.
+# `make` builds $(OUT)/tbmk_grub.iso (or only kernel.elf without GRUB tools).
 
-CFLAGS = -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin \
-         -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 \
-         -Os -Wall -Wextra -I.
+CC ?= gcc
+LD ?= ld
+NASM ?= nasm
+GRUB_MKRESCUE ?= grub-mkrescue
+OUT ?= build
 
-LDFLAGS = -m elf_i386
-ASMFLAGS = -f elf32
+C_SOURCES := kernel.c except.c keyboard.c disk.c syscall.c fat.c shell.c
+ASM_SOURCES := boot/multiboot.asm
+O_FILES := $(addprefix $(OUT)/obj/,$(C_SOURCES:.c=.o) $(ASM_SOURCES:.asm=.o))
 
-C_SOURCES = kernel.c except.c keyboard.c disk.c syscall.c fat.c shell.c
-ASM_SOURCES = boot/multiboot.asm
-HEADERS = keyboard.h shell.h except.h syscall.h disk.h fat.h \
-          version.h port.h scancode.h vga.h
+CFLAGS := -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin \
+          -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 \
+          -Os -Wall -Wextra -I.
+LDFLAGS := -m elf_i386
 
-C_OBJECTS = $(C_SOURCES:.c=.o)
-ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
-OBJECTS = $(C_OBJECTS) $(ASM_OBJECTS)
+GRUB_CFG := $(OUT)/iso/boot/grub/grub.cfg
+GRUB_KERNEL := $(OUT)/iso/boot/kernel.elf
+ISO := $(OUT)/tbmk_grub.iso
+HAVE_GRUB := $(shell command -v $(GRUB_MKRESCUE) >/dev/null 2>&1 && echo yes)
 
-KERNEL_ELF = iso/boot/kernel.elf
-ISO_FILE = tbmk_grub.iso
+.PHONY: all clean
 
-.PHONY: all clean run debug rebuild help
+ifeq ($(HAVE_GRUB),yes)
+all: $(ISO)
+else
+all: $(OUT)/kernel.elf
+endif
 
-all: $(ISO_FILE)
+$(OUT):
+	@mkdir -p $@
 
-%.o: %.c $(HEADERS)
-	@echo "  CC    $<"
+$(OUT)/obj/%.o: %.c | $(OUT)
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-%.o: %.asm
-	@echo "  NASM  $<"
-	$(NASM) $(ASMFLAGS) $< -o $@
+$(OUT)/obj/%.o: %.asm | $(OUT)
+	@mkdir -p $(dir $@)
+	$(NASM) -f elf32 $< -o $@
 
-$(KERNEL_ELF): $(OBJECTS) link_grub.ld
-	@echo "  LD    $@"
-	@mkdir -p iso/boot/grub
-	$(LD) $(LDFLAGS) -T link_grub.ld $(OBJECTS) -o $@
+$(OUT)/kernel.elf: $(O_FILES) link_grub.ld | $(OUT)
+	$(LD) $(LDFLAGS) -T link_grub.ld $(O_FILES) -o $@
 
-iso/boot/grub/grub.cfg:
-	@mkdir -p iso/boot/grub
-	@echo 'set timeout=20' > $@
-	@echo 'set default=0' >> $@
-	@echo '' >> $@
-	@echo 'menuentry "Console Neko Next" {' >> $@
-	@echo '    multiboot /boot/kernel.elf' >> $@
-	@echo '    boot' >> $@
-	@echo '}' >> $@
+$(GRUB_KERNEL): $(OUT)/kernel.elf
+	@mkdir -p $(dir $@)
+	@cp $< $@
 
-$(ISO_FILE): $(KERNEL_ELF) iso/boot/grub/grub.cfg
-	@echo "  ISO   $@"
-	$(GRUB_MKRESCUE) -o $@ iso/
+$(GRUB_CFG):
+	@mkdir -p $(dir $@)
+	@printf '%s\n' 'set timeout=20' 'set default=0' '' \
+	  'menuentry "Console Neko Next" {' '    multiboot /boot/kernel.elf' '    boot' '}' > $@
 
-run: $(ISO_FILE)
-	$(QEMU) -cdrom $(ISO_FILE) -m 128M
-
-debug: $(ISO_FILE)
-	$(QEMU) -cdrom $(ISO_FILE) -m 128M -s -S
+$(ISO): $(GRUB_KERNEL) $(GRUB_CFG)
+	$(GRUB_MKRESCUE) -o $@ $(OUT)/iso
 
 clean:
-	rm -f $(C_OBJECTS) $(ASM_OBJECTS)
-	rm -f $(KERNEL_ELF)
-	rm -f $(ISO_FILE)
-	rm -rf iso
+	rm -rf $(OUT)
 
-rebuild: clean all
-
-help:
-	@echo "make          - 编译内核"
-	@echo "make run      - 编译并运行"
-	@echo "make debug    - 调试模式"
-	@echo "make clean    - 清理"
-	@echo "make rebuild  - 重新编译"

@@ -1,72 +1,60 @@
-CC = gcc
-LD = ld
-NASM = nasm
-GRUB_MKRESCUE = grub-mkrescue
-QEMU = qemu-system-i386
+ï»¿# TBMK GRUB Multiboot kernel: ELF at 1 MB + ISO when grub-mkrescue exists.
+# `make` builds $(OUT)/pixel_neko.iso (or only kernel.elf without GRUB tools).
 
-CFLAGS = -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin \
-         -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 \
-         -Os -Wall -Wextra -I.
+CC ?= gcc
+LD ?= ld
+NASM ?= nasm
+GRUB_MKRESCUE ?= grub-mkrescue
+OUT ?= build
 
-LDFLAGS = -m elf_i386
-ASMFLAGS = -f elf32
+C_SOURCES := kernel.c mouse.c wm.c font.c calc.c cpanel.c fat.c disk.c filemanager.c
+ASM_SOURCES := boot/multiboot.asm
+O_FILES := $(addprefix $(OUT)/obj/,$(C_SOURCES:.c=.o) $(ASM_SOURCES:.asm=.o))
 
-C_SOURCES = kernel.c mouse.c wm.c font.c calc.c cpanel.c fat.c disk.c filemanager.c
-ASM_SOURCES = boot/multiboot.asm
-HEADERS = mouse.h wm.h font.h calc.h cpanel.h port.h version.h fat.h disk.h filemanager.h
+CFLAGS := -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin \
+          -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 \
+          -Os -Wall -Wextra -I.
+LDFLAGS := -m elf_i386
 
-C_OBJECTS = $(C_SOURCES:.c=.o)
-ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
-OBJECTS = $(C_OBJECTS) $(ASM_OBJECTS)
+GRUB_CFG := $(OUT)/iso/boot/grub/grub.cfg
+GRUB_KERNEL := $(OUT)/iso/boot/kernel.elf
+ISO := $(OUT)/pixel_neko.iso
+HAVE_GRUB := $(shell command -v $(GRUB_MKRESCUE) >/dev/null 2>&1 && echo yes)
 
-KERNEL_ELF = iso/boot/kernel.elf
-ISO_FILE = pixel_neko.iso
+.PHONY: all clean
 
-.PHONY: all clean run debug rebuild
+ifeq ($(HAVE_GRUB),yes)
+all: $(ISO)
+else
+all: $(OUT)/kernel.elf
+endif
 
-all: version.h $(ISO_FILE)
+$(OUT):
+	@mkdir -p $@
 
-version.h: build_counter.sh
-	@echo "  ¸üÐÂbuildºÅ..."
-	@./build_counter.sh
-
-%.o: %.c $(HEADERS)
-	@echo "  CC    $<"
+$(OUT)/obj/%.o: %.c | $(OUT)
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-%.o: %.asm
-	@echo "  NASM  $<"
-	$(NASM) $(ASMFLAGS) $< -o $@
+$(OUT)/obj/%.o: %.asm | $(OUT)
+	@mkdir -p $(dir $@)
+	$(NASM) -f elf32 $< -o $@
 
-$(KERNEL_ELF): $(OBJECTS) link_grub.ld
-	@echo "  LD    $@"
-	@mkdir -p iso/boot/grub
-	$(LD) $(LDFLAGS) -T link_grub.ld $(OBJECTS) -o $@
+$(OUT)/kernel.elf: $(O_FILES) link_grub.ld | $(OUT)
+	$(LD) $(LDFLAGS) -T link_grub.ld $(O_FILES) -o $@
 
-iso/boot/grub/grub.cfg:
-	@mkdir -p iso/boot/grub
-	@echo 'set timeout=20' > $@
-	@echo 'set default=0' >> $@
-	@echo '' >> $@
-	@echo 'menuentry "Pixel Neko Next" {' >> $@
-	@echo '    multiboot /boot/kernel.elf' >> $@
-	@echo '    boot' >> $@
-	@echo '}' >> $@
+$(GRUB_KERNEL): $(OUT)/kernel.elf
+	@mkdir -p $(dir $@)
+	@cp $< $@
 
-$(ISO_FILE): $(KERNEL_ELF) iso/boot/grub/grub.cfg
-	@echo "  ISO   $@"
-	$(GRUB_MKRESCUE) -o $@ iso/
+$(GRUB_CFG):
+	@mkdir -p $(dir $@)
+	@printf '%s\n' 'set timeout=20' 'set default=0' '' \
+	  'menuentry "Pixel Neko Next" {' '    multiboot /boot/kernel.elf' '    boot' '}' > $@
 
-run: $(ISO_FILE)
-	$(QEMU) -cdrom $(ISO_FILE) -m 128M -hda disk.img -boot order=dc
-
-debug: $(ISO_FILE)
-	$(QEMU) -cdrom $(ISO_FILE) -m 128M -hda disk.img -s -S
+$(ISO): $(GRUB_KERNEL) $(GRUB_CFG)
+	$(GRUB_MKRESCUE) -o $@ $(OUT)/iso
 
 clean:
-	rm -f $(C_OBJECTS) $(ASM_OBJECTS)
-	rm -f $(KERNEL_ELF)
-	rm -f $(ISO_FILE)
-	rm -rf iso
+	rm -rf $(OUT)
 
-rebuild: clean all

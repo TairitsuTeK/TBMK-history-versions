@@ -1,4 +1,0 @@
-NASM -f bin BOOT.ASM -o BOOT.BIN
-NASM -f bin KERNEL.ASM -o KERNEL.BIN
-copy /b BOOT.BIN + KERNEL.BIN TBMK.img
-del *.BIN

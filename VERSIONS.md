@@ -1,7 +1,7 @@
 # TBMK 历史版本构建清单
 
-- 生成时间（UTC）：2026-11-21T09:39:34Z
-- 构建工具链：`i686-elf-gcc` / `i686-elf-ld` / `nasm`
+- 统计来源：本地 `make` 全量构建 + GitHub Actions 复验
+- 构建工具链：`i686-elf-gcc` / `i686-elf-ld` / `nasm`（CI 为 `gcc -m32` + `ld`）
 - 结果：**78/78** 构建成功
 
 ## 总览
@@ -127,7 +127,7 @@
 
 ## 说明
 
-- 表中路径与仓库目录一一对应；每个版本目录都保留了原始源码与当年的 Windows `编译.bat`。
-- 产物由 `tools/build.py` 重新生成，未提交进仓库；GitHub Actions 会在每次推送时重建。
+- 表中路径与仓库目录一一对应；每个版本目录都有自己的 `Makefile`，原始 Windows `编译.bat` 已按 Makefile 化并移除。
+- 产物由 `make` / `make release` 生成到 `dist/`，不提交进仓库；GitHub Actions 会在每次推送到 `main` 时重建并发布 Release。
 - 旧版 `os.img` 统一填充为 1.44 MB 软盘镜像，便于 `qemu-system-i386 -fda` 启动；GUI 的 Next 版本使用 GRUB ISO。
-- 原始构建脚本中的 Windows 专用步骤（`copy /b`、`fsutil`、`powershell`）已由跨平台构建器等价实现。
+- Windows 专用步骤（`copy /b`、`fsutil`、`powershell`）以及原先的 Python 辅助脚本已由 Makefile 规则等价实现。

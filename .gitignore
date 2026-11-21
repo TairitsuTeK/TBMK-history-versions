@@ -1,5 +1,7 @@
 # build outputs
+/dist/
 /build/
+*.zip
 
 # compiler and image artifacts
 *.o
@@ -11,8 +13,3 @@
 # editor / OS noise
 Thumbs.db
 .DS_Store
-
-# local build logs
-*.log
-__pycache__/
-
