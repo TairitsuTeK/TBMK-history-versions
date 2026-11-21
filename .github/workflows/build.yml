@@ -52,10 +52,10 @@ jobs:
         with:
           name: tbmk-images
           path: |
-            build/**/*.img
-            build/**/*.iso
-            build/**/*.elf
-            build/**/build.log
+            build/*/*.img
+            build/*/*.iso
+            build/*/*.elf
+            build/*/build.log
             build/manifest.json
           if-no-files-found: warn
           retention-days: 30

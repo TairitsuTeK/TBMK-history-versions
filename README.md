@@ -32,7 +32,7 @@ TBMK 的版本号形如 `C1.2.884.727`：主版本 + 构建号 + 日期（7 月 
 
 1. 安装 `nasm`、`gcc-multilib`、`binutils`、GRUB 工具；
 2. 运行 `python3 tools/build.py --all`；
-3. 把镜像、ELF、ISO、构建日志和 `build/manifest.json` 作为 **`tbmk-images`** artifact 上传。
+3. 把镜像、ELF、ISO、构建日志和 `build/manifest.json` 作为 **`tbmk-images`** artifact 上传（76 个 `.img`、2 个 `.iso`、各版本 `kernel.elf` 与日志，压缩后约 15 MB）。
 
 构建失败会直接让 workflow 失败，并在日志中列出具体版本与编译器输出；artifact 仍然会以 `if: always()` 上传，便于排查。
 
@@ -72,6 +72,7 @@ make all                               # 等价于 --all
 这些项目当年都在 Windows 上用 MinGW + NASM + 批处理构建。为在 Linux CI 上复现，同时不改动历史源码，构建器做了以下处理：
 
 - **区分 C/C++**：很多源码是大写 `.C`，在区分大小写的 Linux 上会被 GCC 当作 C++ 并改名修饰。构建器统一用 `-x c` 强制按 C 编译。
+- **大小写不敏感的文件名**：旧代码里常见 `#include "keyboard.h"` 而磁盘上是 `KEYBOARD.H`，Windows 能自动匹配、Linux 不能。构建器在 `build/<版本>/src` 里为每个大写路径生成小写别名，源码本身保持原样。
 - **MinGW 符号前缀**：旧版的 `KERNEL_ENTRY.ASM` 声明 `_kernel_main`，C 里的 `kernel_main` 在 MinGW 下正好是 `_kernel_main`。ELF 目标没有这个前缀，因此对这类版本追加 `-fleading-underscore`，让源码里的下划线调用（如 `call _keyboard_callback`）保持成立。
 - **现代 GCC 的默认行为**：追加 `-fno-pie -fno-stack-protector`，避免 freestanding 链接引用宿主运行库符号。
 - **C1.2.632.724 的特殊情况**：`SYSCALL.C` 的 inline asm 调用 `static` 函数，`-Os` 会把未被 C 引用的静态函数删除。构建器只对该文件使用 `-O0` 保留符号。
@@ -101,8 +102,8 @@ qemu-system-i386 -cdrom pixel_neko.iso -hda disk.img -m 128M
 ## 验证情况
 
 - 本地（Windows + i686-elf-gcc 15.2）：**78/78 全部构建成功**；
+- GitHub Actions（Ubuntu + gcc-multilib）：**78/78 全部构建成功**，artifact 含 76 个软盘镜像与 2 个 GRUB ISO；
 - 抽样 QEMU 冒烟测试（Kitten 1.2.62、Console 404/716、Pixel 984 等）：构建镜像与原始 `os.img` 的 VGA 文本/帧缓冲输出一致；
-- CI 使用 Ubuntu `gcc -m32` + `-fleading-underscore` 的等价路径，首次 push 后由 Actions 实际验证；
 - 未对所有版本做完整运行时回归：GUI 功能、FAT16 读写等需要人工在 QEMU 中测试。
 
 ## 目录结构
