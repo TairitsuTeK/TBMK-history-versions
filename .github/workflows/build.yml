@@ -34,8 +34,9 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tbmk-images
+          name: tbmk-release
           path: |
+            dist/tbmk-sources.zip
             dist/tbmk-images.zip
             dist/BUILD-INFO.txt
           if-no-files-found: error
@@ -51,8 +52,10 @@ jobs:
             Automated build of every TBMK history version.
 
             - Commit: `${{ github.sha }}`
-            - Contents: 76 bootable floppy images (`.img`), 2 GRUB ISOs, per-version `kernel.elf`, and `BUILD-INFO.txt`
+            - `tbmk-sources.zip`: complete source tree of this commit (78 versions, each with its Makefile)
+            - `tbmk-images.zip`: 76 bootable floppy images (`.img`), 2 GRUB ISOs, per-version `kernel.elf`, and `BUILD-INFO.txt`
           files: |
+            dist/tbmk-sources.zip
             dist/tbmk-images.zip
             dist/BUILD-INFO.txt
           fail_on_unmatched_files: true

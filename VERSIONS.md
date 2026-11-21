@@ -128,6 +128,6 @@
 ## 说明
 
 - 表中路径与仓库目录一一对应；每个版本目录都有自己的 `Makefile`，原始 Windows `编译.bat` 已按 Makefile 化并移除。
-- 产物由 `make` / `make release` 生成到 `dist/`，不提交进仓库；GitHub Actions 会在每次推送到 `main` 时重建并发布 Release。
+- 产物由 `make` / `make release` 生成到 `dist/`，不提交进仓库；GitHub Actions 会在每次推送到 `main` 时重建并发布 Release（源码包 `tbmk-sources.zip` + 镜像包 `tbmk-images.zip`）。
 - 旧版 `os.img` 统一填充为 1.44 MB 软盘镜像，便于 `qemu-system-i386 -fda` 启动；GUI 的 Next 版本使用 GRUB ISO。
 - Windows 专用步骤（`copy /b`、`fsutil`、`powershell`）以及原先的 Python 辅助脚本已由 Makefile 规则等价实现。

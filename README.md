@@ -2,9 +2,10 @@
 
 [![build](https://github.com/TairitsuTeK/TBMK-history-versions/actions/workflows/build.yml/badge.svg)](https://github.com/TairitsuTeK/TBMK-history-versions/actions/workflows/build.yml)
 
-[TBMK（Tiny Bare-metal Micro Kernel）](https://github.com/TairitsuTeK) 历代版本的完整源码归档。仓库保留当年的目录结构，**每个版本目录都有自己的 Makefile**；GitHub Actions 负责全量编译，并在每次 push 到 `main` 时自动发布 Release。
+[TBMK（Tiny Bare-metal Micro Kernel）](https://github.com/TairitsuTeK) 历代版本的完整源码归档。仓库保留当年的目录结构，**每个版本目录都有自己的 Makefile，不存在任何 `.bat` / `.sh` 构建脚本**；GitHub Actions 负责全量编译，并在每次 push 到 `main` 时自动发布 Release，同时提供源码包与镜像包。
 
-- 构建产物：`os.img` / `TBMK.img` / `TMOS.img` 软盘镜像、`kernel.elf`，以及两个 Next 版本的 GRUB `.iso`
+- Release 资产：`tbmk-sources.zip`（全部版本源码）与 `tbmk-images.zip`（全部镜像）
+- 镜像包含 `os.img` / `TBMK.img` / `TMOS.img` 软盘镜像、`kernel.elf`，以及两个 Next 版本的 GRUB `.iso`
 - 每个版本的源码、类型与产物见 **[VERSIONS.md](VERSIONS.md)**
 - 发布页：<https://github.com/TairitsuTeK/TBMK-history-versions/releases>
 
@@ -30,12 +31,12 @@ TBMK 的版本号形如 `C1.2.884.727`：主版本 + 构建号 + 日期（7 月 
 
 `.github/workflows/build.yml` 在 push 到 `main`、PR 和手动触发时运行：
 
-1. 安装 `nasm`、`gcc-multilib`、`binutils`、GRUB 工具和 `zip`；
-2. 执行 `make release`：递归编译全部 78 个版本，并打包 `dist/tbmk-images.zip`；
-3. 上传 `tbmk-images` workflow artifact；
-4. 非 PR 构建会以 `build-<run_number>` 为 tag 创建 GitHub Release，附带 `tbmk-images.zip` 与 `BUILD-INFO.txt`。
+1. 安装 `make`、`nasm`、`gcc-multilib`、`binutils`、GRUB 工具和 `zip`；
+2. 执行 `make release`：递归编译全部 78 个版本，并生成 `dist/tbmk-sources.zip` 与 `dist/tbmk-images.zip`；
+3. 上传 `tbmk-release` workflow artifact；
+4. 非 PR 构建会以 `build-<run_number>` 为 tag 创建 GitHub Release，附带上述两个压缩包与 `BUILD-INFO.txt`。
 
-Release 里的压缩包包含 76 个可启动软盘镜像、2 个 GRUB ISO，以及每个版本的 `kernel.elf`。任一版本编译失败都会让整个 workflow 失败。
+Release 里的 `tbmk-sources.zip` 是当前提交的完整源码树（78 个版本，每个都带 Makefile）；`tbmk-images.zip` 包含 76 个可启动软盘镜像、2 个 GRUB ISO，以及每个版本的 `kernel.elf`。任一版本编译失败都会让整个 workflow 失败。
 
 ## 本地构建
 
@@ -59,7 +60,8 @@ Windows：安装 NASM、GNU Make 与 i686-elf 工具链，把它们的 `bin` 加
 
 ```bash
 make              # 编译所有版本到 dist/<版本目录>/
-make release      # 编译并打包 dist/tbmk-images.zip
+make sources      # 把当前提交的全部源码打包为 dist/tbmk-sources.zip
+make release      # 编译并打包 dist/tbmk-sources.zip + dist/tbmk-images.zip
 make list         # 列出 78 个版本
 make clean        # 清理 dist/ 与本地 build/
 ```
@@ -109,7 +111,7 @@ qemu-system-i386 -cdrom pixel_neko.iso -hda disk.img -m 128M
 ## 验证情况
 
 - 本地（Windows + GNU Make + i686-elf-gcc 15.2，Git Bash shell）：**78/78 全部构建成功**；
-- GitHub Actions（Ubuntu + gcc-multilib）：**78/78 全部构建成功**，Release 含 76 个软盘镜像与 2 个 GRUB ISO；
+- GitHub Actions（Ubuntu + gcc-multilib）：**78/78 全部构建成功**，Release 同时包含源码包与镜像包；
 - 抽样 QEMU 冒烟测试（Kitten 1.2.62、Console 404/716、Pixel 984 等）：构建镜像与原始 `os.img` 的 VGA 文本/帧缓冲输出一致；
 - 未对所有版本做完整运行时回归：GUI 功能、FAT16 读写等需要人工在 QEMU 中测试。
 
