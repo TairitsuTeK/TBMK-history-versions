@@ -134,7 +134,8 @@ def run(command: list[str], cwd: Path, log) -> None:
 
 
 def build_asm(directory: Path, out: Path, tools: dict[str, str], log) -> list[Path]:
-    files = lower_file_map(directory)
+    staged, originals = stage_sources(directory, out)
+    files = root_files_of(originals)
     target_name = "TBMK.img"
     for script in directory.glob("*.bat"):
         text = read_text(script)
@@ -145,12 +146,49 @@ def build_asm(directory: Path, out: Path, tools: dict[str, str], log) -> list[Pa
 
     boot_bin = out / "boot.bin"
     kernel_bin = out / "kernel.bin"
-    run([tools["nasm"], "-f", "bin", str(files["boot.asm"]), "-o", str(boot_bin)], directory, log)
-    run([tools["nasm"], "-f", "bin", str(files["kernel.asm"]), "-o", str(kernel_bin)], directory, log)
+    run([tools["nasm"], "-f", "bin", str(staged / files["boot.asm"]), "-o", str(boot_bin)], staged, log)
+    run([tools["nasm"], "-f", "bin", str(staged / files["kernel.asm"]), "-o", str(kernel_bin)], staged, log)
 
     image = out / target_name
     image.write_bytes(boot_bin.read_bytes() + kernel_bin.read_bytes())
     return [image]
+
+
+def stage_sources(directory: Path, out: Path) -> tuple[Path, list[Path]]:
+    """Mirror a version into the build directory with case-folded aliases.
+
+    The Windows-era sources mix cases freely (``#include "keyboard.h"`` for
+    ``KEYBOARD.H``) and the original builds relied on a case-insensitive file
+    system. The repository keeps the files exactly as they were, so the build
+    directory carries a lowercase alias for every uppercase path segment.
+    """
+    staged = out / "src"
+    if staged.exists():
+        shutil.rmtree(staged)
+    originals: list[Path] = []
+    for item in sorted(directory.rglob("*")):
+        if not item.is_file():
+            continue
+        relative = item.relative_to(directory)
+        target = staged / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(item, target)
+        originals.append(relative)
+        lowercase = Path(*[part.lower() for part in relative.parts])
+        if lowercase != relative:
+            alias = staged / lowercase
+            if not alias.exists():
+                alias.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, alias)
+    return staged, originals
+
+
+def root_files_of(originals: list[Path]) -> dict[str, Path]:
+    return {
+        relative.name.lower(): relative
+        for relative in originals
+        if len(relative.parts) == 1
+    }
 
 
 def static_functions_referenced_by_inline_asm(source: Path) -> bool:
@@ -172,20 +210,23 @@ def static_functions_referenced_by_inline_asm(source: Path) -> bool:
 
 
 def build_legacy(directory: Path, out: Path, tools: dict[str, str], log) -> list[Path]:
-    files = lower_file_map(directory)
+    staged, originals = stage_sources(directory, out)
+    files = root_files_of(originals)
     if "boot.asm" not in files or "kernel_entry.asm" not in files or "link.ld" not in files:
         raise BuildError("legacy build needs BOOT.ASM, KERNEL_ENTRY.ASM and link.ld")
+    paths = {name: staged / relative for name, relative in files.items()}
 
-    entry_source = read_text(files["kernel_entry.asm"])
+    entry_source = read_text(paths["kernel_entry.asm"])
     leading_underscore = re.search(r"(?i)\b_kernel_main\b", entry_source) is not None
 
     boot_bin = out / "boot.bin"
     entry_obj = out / "entry.o"
-    run([tools["nasm"], "-f", "bin", str(files["boot.asm"]), "-o", str(boot_bin)], directory, log)
-    run([tools["nasm"], "-f", "elf32", str(files["kernel_entry.asm"]), "-o", str(entry_obj)], directory, log)
+    run([tools["nasm"], "-f", "bin", str(paths["boot.asm"]), "-o", str(boot_bin)], staged, log)
+    run([tools["nasm"], "-f", "elf32", str(paths["kernel_entry.asm"]), "-o", str(entry_obj)], staged, log)
 
     c_sources = sorted(
-        (p for p in files.values() if p.suffix.lower() == ".c"),
+        (staged / relative for relative in originals
+         if len(relative.parts) == 1 and relative.suffix.lower() == ".c"),
         key=lambda p: p.name.lower(),
     )
     if not c_sources:
@@ -195,7 +236,7 @@ def build_legacy(directory: Path, out: Path, tools: dict[str, str], log) -> list
         "-x", "c",
         "-ffreestanding", "-nostdlib", "-nostartfiles", "-fno-builtin",
         "-fno-pie", "-fno-stack-protector", "-Os",
-        f"-I{directory}",
+        f"-I{staged}",
     ]
     if tools["is_elf"] != "1":
         flags.insert(0, "-m32")
@@ -209,11 +250,11 @@ def build_legacy(directory: Path, out: Path, tools: dict[str, str], log) -> list
         if static_functions_referenced_by_inline_asm(source):
             file_flags.append("-O0")
             log.write(f"note: {source.name} keeps static symbols referenced by inline asm (-O0)\n")
-        run([tools["cc"], *file_flags, "-c", str(source), "-o", str(obj)], directory, log)
+        run([tools["cc"], *file_flags, "-c", str(source), "-o", str(obj)], staged, log)
         objects.append(obj)
 
     kernel_elf = out / "kernel.elf"
-    run([tools["ld"], "-m", "elf_i386", "-T", str(files["link.ld"]), "-o", str(kernel_elf), *map(str, objects)], directory, log)
+    run([tools["ld"], "-m", "elf_i386", "-T", str(paths["link.ld"]), "-o", str(kernel_elf), *map(str, objects)], staged, log)
     kernel_bin = out / "kernel.bin"
     run([tools["objcopy"], "-O", "binary", str(kernel_elf), str(kernel_bin)], directory, log)
 
@@ -275,6 +316,8 @@ def build_one(directory: Path, tools: dict[str, str], out_root: Path) -> dict:
     relative = directory.relative_to(ROOT)
     flavor = flavor_of(directory)
     out = out_root / slug_for(relative)
+    if out.exists():
+        shutil.rmtree(out)
     out.mkdir(parents=True, exist_ok=True)
     log = open(out / "build.log", "w", encoding="utf-8")
     started = time.time()
