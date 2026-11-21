@@ -1,0 +1,1222 @@
+================================================================================
+内核源代码收集
+生成时间: 2026-08-21 16:03:02
+源目录: D:\Code\Kernels\Tiny Bare-metal Micro Kernel\Pixel Neko Next(C2.0 Next)\GUI.C2.0.1001.729
+文件总数: 15
+================================================================================
+
+
+********************************************************************************
+文件 1: calc.c
+********************************************************************************
+
+// calc.c - 温暖配色版（独立模块，无wm函数）
+#include "calc.h"
+#include "font.h"
+
+static int display = 0;
+static int op = 0;
+static int stored = 0;
+static int new_number = 1;
+
+static int btn_x(int col) { return col * 26 + 8; }
+static int btn_y(int row) { return row * 18 + 42; }
+
+static int btn_color(const char* text)
+{
+    if(text[0]=='C') return 3;
+    if(text[0]=='=') return 2;
+    if(text[0]=='+'||text[0]=='-'||text[0]=='*'||text[0]=='/') return 1;
+    return 0;
+}
+
+static void draw_btn(unsigned char* v, int wx, int wy, int col, int row, const char* text, int pressed)
+{
+    int bx = wx + btn_x(col), by = wy + btn_y(row);
+    int c = btn_color(text);
+    unsigned char bg = (c==0)?7:(c==1)?6:(c==2)?2:4;
+    unsigned char hl = (c==0)?15:(c==1)?14:(c==2)?10:12;
+    unsigned char sh = (c==0)?0:(c==1)?3:(c==2)?0:0;
+
+    for(int y=by; y<by+16; y++) for(int x=bx; x<bx+24; x++) v[y*320+x]=bg;
+    if(pressed){
+        for(int x=bx; x<bx+24; x++) v[by*320+x]=sh;
+        for(int y=by; y<by+16; y++) v[y*320+bx]=sh;
+        for(int x=bx; x<bx+24; x++) v[(by+15)*320+x]=hl;
+        for(int y=by; y<by+16; y++) v[y*320+bx+23]=hl;
+    }else{
+        for(int x=bx; x<bx+24; x++) v[by*320+x]=hl;
+        for(int y=by; y<by+16; y++) v[y*320+bx]=hl;
+        for(int x=bx; x<bx+24; x++) v[(by+15)*320+x]=sh;
+        for(int y=by; y<by+16; y++) v[y*320+bx+23]=sh;
+    }
+    int tw = 0; while(text[tw]) tw++;
+    int tx = bx + (24 - tw*6) / 2;
+    int ty = by + (16 - 7) / 2;
+    int fg = (c==3||c==2)?15:0;
+    font_draw_text(v, tx, ty, text, fg);
+}
+
+static int in_btn(int mx, int my, int wx, int wy, int col, int row)
+{
+    int bx = wx + btn_x(col), by = wy + btn_y(row);
+    return mx>=bx && mx<bx+24 && my>=by && my<by+16;
+}
+
+void calc_init(void)
+{
+    display = 0;
+    op = 0;
+    stored = 0;
+    new_number = 1;
+}
+
+void calc_draw(unsigned char* v, int wx, int wy, int ww, int wh)
+{
+    for(int y=wy+15; y<wy+38; y++) for(int x=wx+4; x<wx+ww-4; x++) v[y*320+x]=15;
+    for(int x=wx+4; x<wx+ww-4; x++){v[(wy+15)*320+x]=0; v[(wy+37)*320+x]=0;}
+    for(int y=wy+15; y<wy+38; y++){v[y*320+wx+4]=0; v[y*320+wx+ww-5]=0;}
+
+    if(display == -1){
+        font_draw_text(v, wx+8, wy+24, "Error", 0);
+    }else{
+        char buf[16];
+        int n = display, i = 0;
+        if(n < 0){ buf[i++] = '-'; n = -n; }
+        if(n == 0) buf[i++] = '0';
+        while(n > 0 && i < 15){ buf[i++] = '0' + n % 10; n /= 10; }
+        buf[i] = 0;
+        int start = (display < 0) ? 1 : 0;
+        int end = i - 1;
+        while(start < end){ char t = buf[start]; buf[start] = buf[end]; buf[end] = t; start++; end--; }
+        font_draw_text(v, wx+ww-8-i*6, wy+24, buf, 0);
+    }
+
+    draw_btn(v,wx,wy,0,0,"7",0); draw_btn(v,wx,wy,1,0,"8",0); draw_btn(v,wx,wy,2,0,"9",0); draw_btn(v,wx,wy,3,0,"/",0);
+    draw_btn(v,wx,wy,0,1,"4",0); draw_btn(v,wx,wy,1,1,"5",0); draw_btn(v,wx,wy,2,1,"6",0); draw_btn(v,wx,wy,3,1,"*",0);
+    draw_btn(v,wx,wy,0,2,"1",0); draw_btn(v,wx,wy,1,2,"2",0); draw_btn(v,wx,wy,2,2,"3",0); draw_btn(v,wx,wy,3,2,"-",0);
+    draw_btn(v,wx,wy,0,3,"0",0); draw_btn(v,wx,wy,1,3,"C",0); draw_btn(v,wx,wy,2,3,"=",0); draw_btn(v,wx,wy,3,3,"+",0);
+}
+
+void calc_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh)
+{
+    int digits = (ww - 8) / 6;
+    if(digits > 9) digits = 9;
+    int max_val = 1;
+    for(int i = 0; i < digits; i++) max_val *= 10;
+
+    if(display == -1){
+        if(in_btn(mx,my,wx,wy,1,3)){ display=0; op=0; stored=0; new_number=1; }
+        return;
+    }
+
+    for(int digit=0; digit<=9; digit++){
+        int col = (digit==0)?0:((digit-1)%3);
+        int row = (digit==0)?3:(2-(digit-1)/3);
+        if(in_btn(mx,my,wx,wy,col,row)){
+            if(new_number){ display=0; new_number=0; }
+            else if(display >= max_val / 10) return;
+            display = display * 10 + digit;
+            return;
+        }
+    }
+    if(in_btn(mx,my,wx,wy,3,3)){ op=1; stored=display; new_number=1; return; }
+    if(in_btn(mx,my,wx,wy,3,2)){ op=2; stored=display; new_number=1; return; }
+    if(in_btn(mx,my,wx,wy,3,1)){ op=3; stored=display; new_number=1; return; }
+    if(in_btn(mx,my,wx,wy,3,0)){ op=4; stored=display; new_number=1; return; }
+    if(in_btn(mx,my,wx,wy,2,3)){
+        int result = 0;
+        if(op==1) result = stored + display;
+        else if(op==2) result = stored - display;
+        else if(op==3) result = stored * display;
+        else if(op==4 && display!=0) result = stored / display;
+        if(result >= max_val || result <= -max_val/10){ display = -1; op=0; new_number=1; return; }
+        display = result;
+        op=0; new_number=1;
+        return;
+    }
+    if(in_btn(mx,my,wx,wy,1,3)){
+        display=0; op=0; stored=0; new_number=1;
+        return;
+    }
+}
+
+[文件结束 - 共130行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 2: calc.h
+********************************************************************************
+
+#ifndef CALC_H
+#define CALC_H
+
+void calc_init(void);
+void calc_draw(unsigned char* v, int wx, int wy, int ww, int wh);
+void calc_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh);
+
+#endif
+
+[文件结束 - 共8行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 3: cpanel.c
+********************************************************************************
+
+#include "cpanel.h"
+#include "font.h"
+#include "mouse.h"
+
+static int slider_val = 2;
+
+void cpanel_init(void)
+{
+    slider_val = mouse_get_speed();
+}
+
+void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
+{
+    font_draw_text(v, wx+8, wy+26, "Mouse Speed", 0);
+    int tx = wx+20, ty = wy+50;
+    // 轨道
+    for(int y=ty; y<ty+8; y++) for(int x=tx; x<tx+100; x++) v[y*320+x]=7;
+    for(int x=tx; x<tx+100; x++) v[ty*320+x]=0;
+    for(int x=tx; x<tx+100; x++) v[(ty+7)*320+x]=0;
+    for(int y=ty; y<ty+8; y++) {v[y*320+tx]=0; v[y*320+tx+99]=0;}
+    // 5个档位标记
+    for(int i=0;i<5;i++){int sx=tx+i*20+8;for(int y=ty-2;y<ty+10;y++)for(int x=sx;x<sx+4;x++)v[y*320+x]=0;}
+    // 滑块
+    int sx=tx+slider_val*20-4, sy=ty-3;
+    for(int y=sy;y<sy+14;y++)for(int x=sx;x<sx+12;x++)v[y*320+x]=9;
+    for(int x=sx;x<sx+12;x++)v[sy*320+x]=11;
+    for(int y=sy;y<sy+14;y++)v[y*320+sx]=11;
+    for(int x=sx;x<sx+12;x++)v[(sy+13)*320+x]=1;
+    for(int y=sy;y<sy+14;y++)v[y*320+sx+11]=1;
+    char buf[10]="Speed: ";
+    buf[7]='0'+slider_val; font_draw_text(v,wx+20,wy+70,buf,0);
+}
+
+void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh)
+{
+    int tx=wx+20, ty=wy+50;
+    if(my>=ty-3 && my<ty+11 && mx>=tx && mx<tx+100){
+        int nv=(mx-tx)/20;
+        if(nv<0)nv=0; if(nv>4)nv=4;
+        slider_val=nv;
+        mouse_set_speed(slider_val);
+    }
+}
+
+[文件结束 - 共43行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 4: cpanel.h
+********************************************************************************
+
+#ifndef CPANEL_H
+#define CPANEL_H
+
+void cpanel_init(void);
+void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh);
+void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh);
+
+#endif
+
+[文件结束 - 共8行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 5: FONT.C
+********************************************************************************
+
+#include "font.h"
+
+unsigned char font_small[128][7] = {
+    [32]={0x00,0x00,0x00,0x00,0x00,0x00,0x00},
+    [33]={0x40,0x40,0x40,0x40,0x00,0x40,0x00},
+    [34]={0xA0,0xA0,0x00,0x00,0x00,0x00,0x00},
+    [35]={0x50,0xF8,0x50,0xF8,0x50,0x00,0x00},
+    [36]={0x40,0xF0,0xC0,0x70,0xF0,0x40,0x00},
+    [37]={0x90,0x20,0x40,0x80,0x90,0x00,0x00},
+    [38]={0x60,0x90,0x60,0xA0,0x90,0x68,0x00},
+    [39]={0x40,0x40,0x00,0x00,0x00,0x00,0x00},
+    [40]={0x20,0x40,0x40,0x40,0x40,0x20,0x00},
+    [41]={0x40,0x20,0x20,0x20,0x20,0x40,0x00},
+    [42]={0x00,0x50,0x20,0xF8,0x20,0x50,0x00},
+    [43]={0x00,0x40,0xE0,0x40,0x00,0x00,0x00},
+    [44]={0x00,0x00,0x00,0x00,0x40,0x40,0x80},
+    [45]={0x00,0x00,0x00,0xF0,0x00,0x00,0x00},
+    [46]={0x00,0x00,0x00,0x00,0x00,0x40,0x00},
+    [47]={0x10,0x20,0x40,0x80,0x00,0x00,0x00},
+    [48]={0x60,0x90,0x90,0x90,0x90,0x60,0x00},
+    [49]={0x40,0xC0,0x40,0x40,0x40,0xE0,0x00},
+    [50]={0xE0,0x10,0x20,0x40,0x80,0xF0,0x00},
+    [51]={0xE0,0x10,0x60,0x10,0x10,0xE0,0x00},
+    [52]={0x20,0x60,0xA0,0xF0,0x20,0x20,0x00},
+    [53]={0xF0,0x80,0xE0,0x10,0x10,0xE0,0x00},
+    [54]={0x60,0x80,0xE0,0x90,0x90,0xE0,0x00},
+    [55]={0xF0,0x10,0x20,0x40,0x40,0x40,0x00},
+    [56]={0x60,0x90,0x90,0x60,0x90,0x60,0x00},
+    [57]={0xE0,0x90,0x90,0xF0,0x10,0xE0,0x00},
+    [58]={0x00,0x40,0x00,0x00,0x40,0x00,0x00},
+    [59]={0x00,0x40,0x00,0x00,0x40,0x80,0x00},
+    [60]={0x20,0x40,0x80,0x40,0x20,0x00,0x00},
+    [61]={0x00,0xF0,0x00,0xF0,0x00,0x00,0x00},
+    [62]={0x80,0x40,0x20,0x40,0x80,0x00,0x00},
+    [63]={0xE0,0x10,0x60,0x40,0x00,0x40,0x00},
+    [64]={0x60,0x90,0xB0,0xB0,0x80,0x60,0x00},
+    [65]={0x60,0x90,0x90,0xF0,0x90,0x90,0x00},
+    [66]={0xE0,0x90,0xE0,0x90,0x90,0xE0,0x00},
+    [67]={0x60,0x90,0x80,0x80,0x90,0x60,0x00},
+    [68]={0xE0,0x90,0x90,0x90,0x90,0xE0,0x00},
+    [69]={0xF0,0x80,0xE0,0x80,0x80,0xF0,0x00},
+    [70]={0xF0,0x80,0xE0,0x80,0x80,0x80,0x00},
+    [71]={0x60,0x90,0x80,0xB0,0x90,0x60,0x00},
+    [72]={0x90,0x90,0xF0,0x90,0x90,0x90,0x00},
+    [73]={0xE0,0x40,0x40,0x40,0x40,0xE0,0x00},
+    [74]={0x30,0x20,0x20,0x20,0xA0,0x40,0x00},
+    [75]={0x90,0xA0,0xC0,0xA0,0x90,0x90,0x00},
+    [76]={0x80,0x80,0x80,0x80,0x80,0xF0,0x00},
+    [77]={0x90,0xF0,0xF0,0x90,0x90,0x90,0x00},
+    [78]={0x90,0xD0,0xB0,0x90,0x90,0x90,0x00},
+    [79]={0x60,0x90,0x90,0x90,0x90,0x60,0x00},
+    [80]={0xE0,0x90,0x90,0xE0,0x80,0x80,0x00},
+    [81]={0x60,0x90,0x90,0x90,0xA0,0x50,0x00},
+    [82]={0xE0,0x90,0x90,0xE0,0xA0,0x90,0x00},
+    [83]={0x60,0x90,0x40,0x20,0x90,0x60,0x00},
+    [84]={0xF0,0x40,0x40,0x40,0x40,0x40,0x00},
+    [85]={0x90,0x90,0x90,0x90,0x90,0x60,0x00},
+    [86]={0x90,0x90,0x90,0x90,0x60,0x60,0x00},
+    [87]={0x90,0x90,0x90,0xF0,0xF0,0x90,0x00},
+    [88]={0x90,0x90,0x60,0x60,0x90,0x90,0x00},
+    [89]={0x90,0x90,0x60,0x40,0x40,0x40,0x00},
+    [90]={0xF0,0x10,0x20,0x40,0x80,0xF0,0x00},
+    [91]={0x60,0x40,0x40,0x40,0x40,0x60,0x00},
+    [92]={0x80,0x40,0x20,0x10,0x00,0x00,0x00},
+    [93]={0x60,0x20,0x20,0x20,0x20,0x60,0x00},
+    [94]={0x40,0xA0,0x00,0x00,0x00,0x00,0x00},
+    [95]={0x00,0x00,0x00,0x00,0x00,0xF0,0x00},
+    [96]={0x40,0x20,0x00,0x00,0x00,0x00,0x00},
+    [97]={0x00,0x60,0x10,0x70,0x90,0x70,0x00},
+    [98]={0x80,0x80,0xE0,0x90,0x90,0xE0,0x00},
+    [99]={0x00,0x60,0x90,0x80,0x90,0x60,0x00},
+    [100]={0x10,0x10,0x70,0x90,0x90,0x70,0x00},
+    [101]={0x00,0x60,0x90,0xE0,0x80,0x60,0x00},
+    [102]={0x30,0x40,0xE0,0x40,0x40,0x40,0x00},
+    [103]={0x00,0x70,0x90,0x90,0x70,0x10,0x60},
+    [104]={0x80,0x80,0xE0,0x90,0x90,0x90,0x00},
+    [105]={0x40,0x00,0xC0,0x40,0x40,0xE0,0x00},
+    [106]={0x20,0x00,0x20,0x20,0x20,0xA0,0x40},
+    [107]={0x80,0x90,0xA0,0xC0,0xA0,0x90,0x00},
+    [108]={0xC0,0x40,0x40,0x40,0x40,0xE0,0x00},
+    [109]={0x00,0xD0,0xA8,0xA8,0x88,0x88,0x00},
+    [110]={0x00,0xE0,0x90,0x90,0x90,0x90,0x00},
+    [111]={0x00,0x60,0x90,0x90,0x90,0x60,0x00},
+    [112]={0x00,0xE0,0x90,0x90,0xE0,0x80,0x80},
+    [113]={0x00,0x70,0x90,0x90,0x70,0x10,0x10},
+    [114]={0x00,0xB0,0xC8,0x80,0x80,0x80,0x00},
+    [115]={0x00,0x70,0x80,0x60,0x10,0xE0,0x00},
+    [116]={0x40,0xE0,0x40,0x40,0x40,0x30,0x00},
+    [117]={0x00,0x90,0x90,0x90,0x90,0x70,0x00},
+    [118]={0x00,0x90,0x90,0x90,0x60,0x60,0x00},
+    [119]={0x00,0x90,0x90,0xF0,0xF0,0x90,0x00},
+    [120]={0x00,0x90,0x60,0x60,0x60,0x90,0x00},
+    [121]={0x00,0x90,0x90,0xF0,0x10,0x60,0x00},
+    [122]={0x00,0xF0,0x20,0x40,0x80,0xF0,0x00},
+    [123]={0x30,0x40,0xC0,0x40,0x40,0x30,0x00},
+    [124]={0x40,0x40,0x40,0x40,0x40,0x40,0x00},
+    [125]={0xC0,0x20,0x30,0x20,0x20,0xC0,0x00},
+    [126]={0x68,0xB0,0x00,0x00,0x00,0x00,0x00},
+};
+
+void font_draw_char(unsigned char* vga, int x, int y, char c, unsigned char fg)
+{
+    unsigned char* glyph = font_small[(unsigned char)c];
+    for (int row = 0; row < 7; row++) {
+        unsigned char line = glyph[row];
+        for (int col = 0; col < 5; col++) {
+            if (line & (0x80 >> col)) {
+                int px = x + col, py = y + row;
+                if (px >= 0 && px < 320 && py >= 0 && py < 200)
+                    vga[py*320+px] = fg;
+            }
+        }
+    }
+}
+
+void font_draw_text(unsigned char* vga, int x, int y, const char* text, unsigned char fg)
+{
+    while (*text) {
+        font_draw_char(vga, x, y, *text, fg);
+        x += 6;
+        text++;
+    }
+}
+
+[文件结束 - 共123行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 6: FONT.H
+********************************************************************************
+
+#ifndef FONT_H
+#define FONT_H
+
+extern unsigned char font_small[128][7];
+
+void font_draw_char(unsigned char* vga, int x, int y, char c, unsigned char fg);
+void font_draw_text(unsigned char* vga, int x, int y, const char* text, unsigned char fg);
+
+#endif
+
+[文件结束 - 共9行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 7: KERNEL.C
+********************************************************************************
+
+#include "port.h"
+#include "mouse.h"
+#include "wm.h"
+
+void kernel_main(void)
+{
+    unsigned char* v = (unsigned char*)0xA0000;
+    int mx, my, mb, last_mx = -1, last_my = -1, last_mb = 0;
+
+    wm_init();
+    wm_draw(v);
+    mouse_init();
+
+    while (1) {
+        if (inb(0x64) & 0x01) {
+            unsigned char st = inb(0x64);
+            if (st & 0x20) mouse_handle_byte(inb(0x60));
+            else inb(0x60);
+        }
+        mouse_get(&mx, &my, &mb);
+        int mb_press = (mb & 1) && !(last_mb & 1);
+        int mb_release = !(mb & 1) && (last_mb & 1);
+        last_mb = mb;
+
+        wm_update(v, mx, my, mb, mb_press, mb_release);
+        wm_draw(v);
+
+        if (wm_need_mouse_reset()) {
+            mouse_reset();
+            last_mx = -1; last_my = -1;
+        }
+
+        if (!wm_is_dragging() && (mx != last_mx || my != last_my)) {
+            mouse_draw(v);
+            last_mx = mx; last_my = my;
+        }
+    }
+}
+
+[文件结束 - 共38行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 8: link.ld
+********************************************************************************
+
+ENTRY(_start)
+
+SECTIONS
+{
+    . = 0x1000;
+    
+    .text : {
+        *(.text)
+    }
+    
+    .rodata : {
+        *(.rodata)
+    }
+    
+    .data : {
+        *(.data)
+    }
+    
+    .bss : {
+        *(COMMON)
+        *(.bss)
+        *(.bss.*)
+    }
+    
+    __kernel_end = .;
+
+    /DISCARD/ : {
+        *(.comment)
+        *(.note*)
+        *(.eh_frame)
+    }
+}
+
+[文件结束 - 共32行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 9: MOUSE.C
+********************************************************************************
+
+// mouse.c
+#include "port.h"
+
+static int mx = 160, my = 100;
+static int btn = 0;
+static int cycle = 0;
+static unsigned char buf[3];
+static int init_done = 0;
+
+static unsigned char saved[9][9];
+static int saved_x = -1, saved_y = -1;
+
+int mouse_speed = 2;
+
+void mouse_set_speed(int s) { if(s>=1 && s<=5) mouse_speed = s; }
+int mouse_get_speed(void) { return mouse_speed; }
+
+void mouse_init(void)
+{
+    for (volatile int i = 0; i < 5000000; i++);
+    
+    for (int i = 0; i < 100; i++) {
+        if (inb(0x64) & 0x01) inb(0x60);
+        for (volatile int j = 0; j < 2000; j++);
+    }
+    
+    while (inb(0x64) & 0x02);
+    outb(0x64, 0xA8);
+    for (volatile int i = 0; i < 100000; i++);
+
+    while (inb(0x64) & 0x02);
+    outb(0x64, 0x20);
+    for (volatile int i = 0; i < 100000; i++);
+    while (!(inb(0x64) & 0x01));
+    unsigned char cfg = inb(0x60);
+    cfg |= 0x02;
+    cfg &= ~0x20;
+
+    while (inb(0x64) & 0x02);
+    outb(0x64, 0x60);
+    for (volatile int i = 0; i < 100000; i++);
+    while (inb(0x64) & 0x02);
+    outb(0x60, cfg);
+    for (volatile int i = 0; i < 100000; i++);
+
+    while (inb(0x64) & 0x02);
+    outb(0x64, 0xD4);
+    for (volatile int i = 0; i < 100000; i++);
+    while (inb(0x64) & 0x02);
+    outb(0x60, 0xF4);
+    for (volatile int i = 0; i < 100000; i++);
+
+    int timeout = 10000000;
+    while (timeout--) {
+        if (inb(0x64) & 0x01) {
+            if (inb(0x60) == 0xFA) { init_done = 1; break; }
+        }
+    }
+
+    if (init_done) {
+        while (inb(0x64) & 0x02);
+        outb(0x64, 0xD4); for (volatile int i = 0; i < 50000; i++);
+        while (inb(0x64) & 0x02);
+        outb(0x60, 0xF3); for (volatile int i = 0; i < 50000; i++);
+        while (inb(0x64) & 0x02);
+        outb(0x64, 0xD4); for (volatile int i = 0; i < 50000; i++);
+        while (inb(0x64) & 0x02);
+        outb(0x60, 60);
+    }
+}
+
+void mouse_handle_byte(unsigned char d)
+{
+    if (!init_done) return;
+    if (cycle == 0 && !(d & 0x08)) return;
+    buf[cycle] = d;
+    cycle++;
+    if (cycle == 3) {
+        cycle = 0;
+        btn = buf[0] & 0x07;
+        int dx = buf[1];
+        int dy = buf[2];
+        if (buf[0] & 0x10) dx = dx - 256;
+        if (buf[0] & 0x20) dy = dy - 256;
+        mx += dx * mouse_speed / 2;
+        my -= dy * mouse_speed / 2;
+        if (mx < 0) mx = 0;
+        if (mx > 319) mx = 319;
+        if (my < 0) my = 0;
+        if (my > 199) my = 199;
+    }
+}
+
+void mouse_get(int* x, int* y, int* b)
+{
+    if (x) *x = mx;
+    if (y) *y = my;
+    if (b) *b = btn;
+}
+
+void mouse_draw(unsigned char* vga)
+{
+    if (!init_done) return;
+    if (saved_x >= 0) {
+        for (int i = 0; i < 9; i++)
+            for (int j = 0; j < 9; j++)
+                if (saved_y+i < 200 && saved_x+j < 320)
+                    vga[(saved_y+i)*320+(saved_x+j)] = saved[i][j];
+    }
+    int x = mx, y = my;
+    for (int i = 0; i < 9; i++)
+        for (int j = 0; j < 9; j++)
+            saved[i][j] = (y+i < 200 && x+j < 320) ? vga[(y+i)*320+(x+j)] : 0;
+    saved_x = x;
+    saved_y = y;
+    for (int j = 0; j < 9; j++) {
+        int px = x+j, py = y+4;
+        if (px < 320 && py < 200) vga[py*320+px] = 0;
+    }
+    for (int i = 0; i < 9; i++) {
+        int px = x+4, py = y+i;
+        if (px < 320 && py < 200) vga[py*320+px] = 0;
+    }
+    if (x+4 < 320 && y+4 < 200) vga[(y+4)*320+(x+4)] = 15;
+}
+
+void mouse_reset(void)
+{
+    saved_x = -1;
+    saved_y = -1;
+}
+
+[文件结束 - 共131行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 10: MOUSE.H
+********************************************************************************
+
+#ifndef MOUSE_H
+#define MOUSE_H
+
+void mouse_init(void);
+void mouse_handle_byte(unsigned char d);
+void mouse_get(int* x, int* y, int* btn);
+void mouse_draw(unsigned char* vga);
+void mouse_reset(void);
+
+extern int mouse_speed;
+void mouse_set_speed(int s);
+int mouse_get_speed(void);
+
+#endif
+
+[文件结束 - 共14行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 11: PORT.H
+********************************************************************************
+
+#ifndef PORT_H
+#define PORT_H
+
+static inline void outb(unsigned short port, unsigned char value)
+{
+    __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline unsigned char inb(unsigned short port)
+{
+    unsigned char value;
+    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+#endif
+
+[文件结束 - 共16行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 12: version.h
+********************************************************************************
+
+#ifndef VERSION_H 
+#define VERSION_H 
+#define VER_STRING1       "Codename Pixel Neko NEXT" 
+#define KERNEL_NAME       "TBMK GUI Shell" 
+#define KERNEL_CODENAME   "Pixel Neko" 
+#define KERNEL_VERSION    "C2.0" 
+#define KERNEL_BUILD      "1007.814" 
+#define KERNEL_COPYRIGHT  "(C) 2026 Tairitsu_tty" 
+#define KERNEL_AUTHOR     "Tairitsu_tty" 
+#define VER_STRING2       KERNEL_BUILD 
+#define VER_STRING3       KERNEL_COPYRIGHT 
+#endif 
+
+[文件结束 - 共13行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 13: wm.c
+********************************************************************************
+
+// wm.c - 完整版（修复CP恢复 + 图标文字去重 + 按钮位置调整）
+#include "wm.h"
+#include "font.h"
+#include "version.h"
+#include "port.h"
+#include "calc.h"
+#include "cpanel.h"
+
+static int wx=80, wy=52, ww=160, wh=112;
+static int wx2=100, wy2=70, ww2=100, wh2=70;
+static int ww2_def=100, wh2_def=70;
+static int wcx=95, wcy=50, wcw=140, wch=120;
+static int wcw_def=140, wch_def=120;
+static int cpx=85, cpy=55, cpw=150, cph=110;
+static int cpw_def=150, cph_def=110;
+static int wv=0, cv=0, clv=0, cpv=0;
+static int am=0, cm=0, clm=0, cpm=0;
+static int asx=80, asy=52, csx=100, csy=70, clsx=95, clsy=50, cpsx=85, cpsy=55;
+static int zo=0;
+static int dragging=0, dgo=0, dgoy=0, dgw=0;
+static int owx=80, owy=52, owx2=100, owy2=70, owcx=95, owcy=50, ocpx=85, ocpy=55;
+static int okp=0, okbx=0, okby=0;
+static int clp=0, clcx=0, clcy=0, clw=0;
+static int mip=0, miw=0;
+static int aip=0, cip=0, clip=0, cpip=0;
+static int resizing=0, rsdir=0;
+static int rsox=0, rsoy=0, rsow=0, rsoh=0;
+static int tick=0;
+static int redraw=0;
+static int need_mr=0;
+static int restart_pressed=0;
+static int restart_confirm=0;
+static int restart_cancel_pressed=0, restart_ok_pressed=0;
+
+static unsigned char cmos_read(unsigned char a){outb(0x70,a);return inb(0x71);}
+static int bcd_to_int(unsigned char b){return(b>>4)*10+(b&0x0F);}
+static void get_time(int*h,int*m,int*s){*h=bcd_to_int(cmos_read(0x04));*m=bcd_to_int(cmos_read(0x02));*s=bcd_to_int(cmos_read(0x00));}
+
+static void ok_btn(unsigned char* v, int bx, int by, int p)
+{
+    for(int y=by;y<by+12;y++)for(int x=bx;x<bx+32;x++)v[y*320+x]=7;
+    if(p){for(int x=bx;x<bx+32;x++)v[by*320+x]=0;for(int y=by;y<by+12;y++)v[y*320+bx]=0;
+           for(int x=bx;x<bx+32;x++)v[(by+11)*320+x]=15;for(int y=by;y<by+12;y++)v[y*320+bx+31]=15;
+           font_draw_text(v,bx+9,by+3,"OK",0);}
+    else{for(int x=bx;x<bx+32;x++)v[by*320+x]=15;for(int y=by;y<by+12;y++)v[y*320+bx]=15;
+          for(int x=bx;x<bx+32;x++)v[(by+11)*320+x]=0;for(int y=by;y<by+12;y++)v[y*320+bx+31]=0;
+          font_draw_text(v,bx+8,by+2,"OK",0);}
+}
+
+static void cl_btn(unsigned char* v, int cx, int cy, int p)
+{
+    for(int y=cy;y<cy+12;y++)for(int x=cx;x<cx+16;x++)v[y*320+x]=7;
+    if(p){for(int x=cx;x<cx+16;x++)v[cy*320+x]=0;for(int y=cy;y<cy+12;y++)v[y*320+cx]=0;
+           for(int x=cx;x<cx+16;x++)v[(cy+11)*320+x]=15;for(int y=cy;y<cy+12;y++)v[y*320+cx+15]=15;
+           v[(cy+2)*320+cx+5]=0;v[(cy+2)*320+cx+10]=0;v[(cy+3)*320+cx+6]=0;v[(cy+3)*320+cx+9]=0;
+           v[(cy+4)*320+cx+7]=0;v[(cy+4)*320+cx+8]=0;v[(cy+5)*320+cx+7]=0;v[(cy+5)*320+cx+8]=0;
+           v[(cy+6)*320+cx+6]=0;v[(cy+6)*320+cx+9]=0;v[(cy+7)*320+cx+5]=0;v[(cy+7)*320+cx+10]=0;}
+    else{for(int x=cx;x<cx+16;x++)v[cy*320+x]=15;for(int y=cy;y<cy+12;y++)v[y*320+cx]=15;
+          for(int x=cx;x<cx+16;x++)v[(cy+11)*320+x]=0;for(int y=cy;y<cy+12;y++)v[y*320+cx+15]=0;
+          v[(cy+1)*320+cx+5]=0;v[(cy+1)*320+cx+10]=0;v[(cy+2)*320+cx+6]=0;v[(cy+2)*320+cx+9]=0;
+          v[(cy+3)*320+cx+7]=0;v[(cy+3)*320+cx+8]=0;v[(cy+4)*320+cx+6]=0;v[(cy+4)*320+cx+9]=0;
+          v[(cy+5)*320+cx+5]=0;v[(cy+5)*320+cx+10]=0;}
+}
+
+static void mi_btn(unsigned char* v, int mx, int my, int p)
+{
+    for(int y=my;y<my+12;y++)for(int x=mx;x<mx+16;x++)v[y*320+x]=7;
+    if(p){for(int x=mx;x<mx+16;x++)v[my*320+x]=0;for(int y=my;y<my+12;y++)v[y*320+mx]=0;
+           for(int x=mx;x<mx+16;x++)v[(my+11)*320+x]=15;for(int y=my;y<my+12;y++)v[y*320+mx+15]=15;
+           for(int x=mx+5;x<mx+11;x++)v[(my+9)*320+x]=0;}
+    else{for(int x=mx;x<mx+16;x++)v[my*320+x]=15;for(int y=my;y<my+12;y++)v[y*320+mx]=15;
+          for(int x=mx;x<mx+16;x++)v[(my+11)*320+x]=0;for(int y=my;y<my+12;y++)v[y*320+mx+15]=0;
+          for(int x=mx+5;x<mx+11;x++)v[(my+9)*320+x]=0;}
+}
+
+static void icon_hl(unsigned char* v, int x, int y, const char* label)
+{
+    for(int i=y;i<y+16&&i<200;i++)for(int j=x;j<x+16&&j<320;j++)v[i*320+j]=9;
+    for(int i=y+2;i<y+12;i++)for(int j=x+6;j<x+10;j++)v[i*320+j]=15;
+    for(int i=y+12;i<y+14;i++)for(int j=x+6;j<x+10;j++)v[i*320+j]=15;
+    font_draw_text(v, x-3, y+18, label, 0);  // 按下时 x-3，向右偏移1像素
+}
+
+static int in_ok(int mx,int my,int bx,int by){return mx>=bx&&mx<bx+32&&my>=by&&my<by+12;}
+static int in_cl(int mx,int my,int cx,int cy){return mx>=cx&&mx<cx+16&&my>=cy&&my<cy+12;}
+static int in_mi(int mx,int my,int wx,int wy){return mx>=wx&&mx<wx+16&&my>=wy&&my<wy+12;}
+static int in_ic(int mx,int my,int x,int y){return mx>=x&&mx<x+16&&my>=y&&my<y+16;}
+static int in_ta(int mx,int my){return mx>=85&&mx<135&&my>=5&&my<13;}
+static int in_tc(int mx,int my){return mx>=140&&mx<190&&my>=5&&my<13;}
+static int in_tcl(int mx,int my){return mx>=195&&mx<245&&my>=5&&my<13;}
+static int in_tcp(int mx,int my){return mx>=238&&mx<296&&my>=5&&my<13;}
+static int rs_dir(int mx,int my,int wx,int wy,int ww,int wh)
+{
+    int c=12;
+    if(mx<wx||mx>wx+ww||my<wy||my>wy+wh)return 0;
+    if(mx>=wx&&mx<wx+c&&my>=wy&&my<wy+c)return 1;
+    if(mx>=wx+ww-c&&mx<wx+ww&&my>=wy&&my<wy+c)return 2;
+    if(mx>=wx&&mx<wx+c&&my>=wy+wh-c&&my<wy+wh)return 3;
+    if(mx>=wx+ww-c&&mx<wx+ww&&my>=wy+wh-c&&my<wy+wh)return 4;
+    return 0;
+}
+
+static void taskbar(unsigned char* v, int a, int c, int cl, int cp)
+{
+    for(int y=0;y<18;y++)for(int x=0;x<320;x++)v[y*320+x]=8;
+    for(int x=0;x<320;x++)v[0*320+x]=15;for(int y=0;y<18;y++)v[y*320+0]=15;
+    for(int x=0;x<320;x++)v[17*320+x]=0;for(int y=0;y<18;y++)v[y*320+319]=0;
+    if(a)font_draw_text(v,85,5,"[About]",15);
+    if(c)font_draw_text(v,140,5,"[Clock]",15);
+    if(cl)font_draw_text(v,195,5,"[Calc]",15);
+    if(cp)font_draw_text(v,238,5,"[CPanel]",15);
+    int rx=284,ry=1;
+    for(int y=ry;y<ry+16;y++)for(int x=rx;x<rx+16;x++)v[y*320+x]=4;
+    for(int x=rx;x<rx+16;x++)v[ry*320+x]=12;for(int y=ry;y<ry+16;y++)v[y*320+rx]=12;
+    for(int x=rx;x<rx+16;x++)v[(ry+15)*320+x]=0;for(int y=ry;y<ry+16;y++)v[y*320+rx+15]=0;
+    for(int i=ry+3;i<ry+13;i++)for(int j=rx+5;j<rx+11;j++)v[i*320+j]=15;
+    for(int i=ry+4;i<ry+12;i++)for(int j=rx+6;j<rx+10;j++)v[i*320+j]=4;
+    for(int i=ry+2;i<ry+8;i++)for(int j=rx+7;j<rx+9;j++)v[i*320+j]=15;
+}
+
+static void window(unsigned char* v, int wx, int wy, const char* t, int ww, int wh, int rs)
+{
+    for(int y=wy+1;y<wy+wh+1&&y<200;y++)for(int x=wx+1;x<wx+ww+1&&x<320;x++)v[y*320+x]=0;
+    for(int y=wy;y<wy+wh&&y<200;y++)for(int x=wx;x<wx+ww&&x<320;x++)
+        v[y*320+x]=(y==wy||y==wy+wh-1||x==wx||x==wx+ww-1)?0:(y<wy+12)?1:15;
+    cl_btn(v,wx+ww-18,wy+2,0);mi_btn(v,wx+ww-36,wy+2,0);
+    font_draw_text(v,wx+5,wy+3,t,15);
+    if(rs){int c=10;for(int i=0;i<c;i++)for(int j=0;j<=i;j++)
+        {int px=wx+ww-c+j,py=wy+wh-c+i;if(px<320&&py<200)v[py*320+px]=8;}}
+}
+
+static void about_win(unsigned char* v, int wx, int wy)
+{
+    window(v,wx,wy,"About",160,112,0);
+    int lx=wx+54,ly=wy+14;
+    for(int y=ly+3;y<ly+18;y++)for(int x=lx-7;x<lx+48;x++)v[y*320+x]=1;
+    for(int x=lx-4;x<lx+45;x++)v[(ly+3)*320+x]=9;
+    for(int y=ly;y<ly+12;y++)for(int x=lx;x<lx+12;x++)v[y*320+x]=(y==ly||x==lx)?12:4;
+    for(int y=ly;y<ly+12;y++)for(int x=lx+10;x<lx+22;x++)v[y*320+x]=(y==ly||x==lx+10)?10:2;
+    for(int y=ly+7;y<ly+19;y++)for(int x=lx+19;x<lx+31;x++)v[y*320+x]=(y==ly+7||x==lx+19)?11:3;
+    for(int y=ly+7;y<ly+19;y++)for(int x=lx+29;x<lx+41;x++)v[y*320+x]=(y==ly+7||x==lx+29)?13:5;
+    font_draw_char(v,lx+4,ly+4,'T',15);font_draw_char(v,lx+14,ly+4,'B',15);
+    font_draw_char(v,lx+23,ly+11,'M',15);font_draw_char(v,lx+33,ly+11,'K',15);
+    int ly2=wy+40;for(int x=wx+4;x<wx+156;x++)v[ly2*320+x]=8;
+    font_draw_text(v,wx+8,wy+46,VER_STRING1,0);font_draw_text(v,wx+8,wy+54,VER_STRING2,0);
+    font_draw_text(v,wx+8,wy+64,VER_STRING3,8);ok_btn(v,wx+118,wy+90,0);
+}
+
+static void box(unsigned char* v, int x, int y, int w, int h)
+{
+    for(int i=x;i<x+w;i+=2){if(i<320&&y<200&&y>=0)v[y*320+i]=0;if(i<320&&y+h-1<200&&y+h-1>=0)v[(y+h-1)*320+i]=0;}
+    for(int i=y;i<y+h;i+=2){if(x<320&&i<200&&i>=0)v[i*320+x]=0;if(x+w-1<320&&i<200&&i>=0)v[i*320+x+w-1]=0;}
+}
+
+static void icon(unsigned char* v, int x, int y, unsigned char bg, const char* lb)
+{
+    if(bg==1){
+        for(int i=y;i<y+16;i++)for(int j=x;j<x+16;j++)v[i*320+j]=9;
+        for(int j=x;j<x+16;j++)v[y*320+j]=11;for(int i=y;i<y+16;i++)v[i*320+x]=11;
+        for(int j=x;j<x+16;j++)v[(y+15)*320+j]=1;for(int i=y;i<y+16;i++)v[i*320+x+15]=1;
+        for(int i=y+3;i<y+7;i++)for(int j=x+6;j<x+10;j++)v[i*320+j]=15;
+        for(int i=y+8;i<y+9;i++)for(int j=x+6;j<x+10;j++)v[i*320+j]=15;
+        for(int i=y+10;i<y+12;i++)for(int j=x+7;j<x+9;j++)v[i*320+j]=15;
+    }else if(bg==2){
+        for(int i=y;i<y+16;i++)for(int j=x;j<x+16;j++)v[i*320+j]=8;
+        for(int i=y+2;i<y+14;i++)for(int j=x+2;j<x+14;j++)v[i*320+j]=15;
+        for(int j=x+2;j<x+14;j++){v[(y+2)*320+j]=0;v[(y+13)*320+j]=0;}
+        for(int i=y+2;i<y+14;i++){v[i*320+x+2]=0;v[i*320+x+13]=0;}
+        v[(y+8)*320+x+7]=0;v[(y+8)*320+x+8]=0;v[(y+8)*320+x+9]=0;
+        v[(y+5)*320+x+7]=0;v[(y+6)*320+x+7]=0;v[(y+7)*320+x+7]=0;
+        v[(y+8)*320+x+7]=4;
+    }else if(bg==4){
+        for(int i=y;i<y+16;i++)for(int j=x;j<x+16;j++)v[i*320+j]=7;
+        for(int j=x;j<x+16;j++)v[y*320+j]=15;for(int i=y;i<y+16;i++)v[i*320+x]=15;
+        for(int j=x;j<x+16;j++)v[(y+15)*320+j]=0;for(int i=y;i<y+16;i++)v[i*320+x+15]=0;
+        for(int i=y+2;i<y+6;i++)for(int j=x+2;j<x+14;j++)v[i*320+j]=2;
+        for(int j=x+2;j<x+14;j++)v[(y+2)*320+j]=0;
+        for(int i=y+7;i<y+10;i++)for(int j=x+2;j<x+6;j++)v[i*320+j]=15;
+        for(int i=y+7;i<y+10;i++)for(int j=x+7;j<x+11;j++)v[i*320+j]=15;
+        for(int i=y+11;i<y+14;i++)for(int j=x+2;j<x+6;j++)v[i*320+j]=15;
+        for(int i=y+11;i<y+14;i++)for(int j=x+7;j<x+11;j++)v[i*320+j]=15;
+        for(int i=y+7;i<y+14;i++)for(int j=x+12;j<x+14;j++)v[i*320+j]=4;
+        v[(y+3)*320+x+8]=0;v[(y+3)*320+x+9]=0;
+        v[(y+3)*320+x+10]=0;v[(y+3)*320+x+11]=0;
+    }else if(bg==6){
+        // 深灰底
+        for(int i=y;i<y+16;i++)for(int j=x;j<x+16;j++)v[i*320+j]=8;
+        // 3D边框
+        for(int j=x;j<x+16;j++)v[y*320+j]=15;
+        for(int i=y;i<y+16;i++)v[i*320+x]=15;
+        for(int j=x;j<x+16;j++)v[(y+15)*320+j]=0;
+        for(int i=y;i<y+16;i++)v[i*320+x+15]=0;
+        // 滑块图标 - 三条横线代表调节
+        for(int j=x+3;j<x+13;j++)v[(y+4)*320+j]=7;
+        for(int j=x+3;j<x+13;j++)v[(y+4)*320+j]=15;  // 上横线高光
+        for(int j=x+3;j<x+13;j++)v[(y+8)*320+j]=15;  // 中横线
+        for(int j=x+3;j<x+13;j++)v[(y+12)*320+j]=15; // 下横线
+        // 滑块方块
+        for(int i=y+3;i<y+7;i++)for(int j=x+7;j<x+9;j++)v[i*320+j]=9;
+        // 高光
+        v[(y+5)*320+x+7]=11;v[(y+3)*320+x+7]=11;
+    }
+    font_draw_text(v, x-4, y+18, lb, 0);
+}
+
+static void draw_restart_dialog(unsigned char* v)
+{
+    for(int y=70;y<120;y++)for(int x=100;x<280;x++)v[y*320+x]=8;
+    for(int y=72;y<118;y++)for(int x=102;x<278;x++)v[y*320+x]=7;
+    for(int x=102;x<278;x++){v[72*320+x]=15;v[117*320+x]=0;}
+    for(int y=72;y<118;y++){v[y*320+102]=15;v[y*320+277]=0;}
+    font_draw_text(v,125,80,"Restart?",0);font_draw_text(v,115,92,"Are you sure?",0);
+    int bx=115,by=104;
+    for(int y=by;y<by+12;y++)for(int x=bx;x<bx+55;x++)v[y*320+x]=restart_cancel_pressed?0:7;
+    if(!restart_cancel_pressed){for(int x=bx;x<bx+55;x++)v[by*320+x]=15;for(int y=by;y<by+12;y++)v[y*320+bx]=15;
+        for(int x=bx;x<bx+55;x++)v[(by+11)*320+x]=0;for(int y=by;y<by+12;y++)v[y*320+bx+54]=0;
+        font_draw_text(v,bx+14,by+2,"Cancel",0);}
+    else{for(int x=bx;x<bx+55;x++)v[by*320+x]=0;for(int y=by;y<by+12;y++)v[y*320+bx]=0;
+        for(int x=bx;x<bx+55;x++)v[(by+11)*320+x]=15;for(int y=by;y<by+12;y++)v[y*320+bx+54]=15;
+        font_draw_text(v,bx+15,by+3,"Cancel",0);}
+    int rx=185,ry=104;
+    for(int y=ry;y<ry+12;y++)for(int x=rx;x<rx+55;x++)v[y*320+x]=restart_ok_pressed?0:4;
+    if(!restart_ok_pressed){for(int x=rx;x<rx+55;x++)v[ry*320+x]=12;for(int y=ry;y<ry+12;y++)v[y*320+rx]=12;
+        for(int x=rx;x<rx+55;x++)v[(ry+11)*320+x]=0;for(int y=ry;y<ry+12;y++)v[y*320+rx+54]=0;
+        font_draw_text(v,rx+20,ry+2,"OK",15);}
+    else{for(int x=rx;x<rx+55;x++)v[ry*320+x]=0;for(int y=ry;y<ry+12;y++)v[y*320+rx]=0;
+        for(int x=rx;x<rx+55;x++)v[(ry+11)*320+x]=12;for(int y=ry;y<ry+12;y++)v[y*320+rx+54]=12;
+        font_draw_text(v,rx+21,ry+3,"OK",15);}
+}
+
+static void draw_others(unsigned char* v, int dgw)
+{
+    if(zo==0){if(dgw!=4&&cpv&&!cpm){window(v,cpx,cpy,"Control Panel",cpw,cph,0);cpanel_draw(v,cpx,cpy,cpw,cph);}
+        if(dgw!=3&&clv&&!clm){window(v,wcx,wcy,"Calc",wcw,wch,0);calc_draw(v,wcx,wcy,wcw,wch);}
+        if(dgw!=2&&cv&&!cm){window(v,wx2,wy2,"Clock",ww2,wh2,1);int h,m,s;get_time(&h,&m,&s);char b[9];
+            b[0]='0'+h/10;b[1]='0'+h%10;b[2]=':';b[3]='0'+m/10;b[4]='0'+m%10;b[5]=':';b[6]='0'+s/10;b[7]='0'+s%10;b[8]=0;
+            font_draw_text(v,wx2+ww2/2-18,wy2+wh2/2-4,b,0);}
+        if(dgw!=1&&wv&&!am)about_win(v,wx,wy);}
+    else if(zo==1){if(dgw!=4&&cpv&&!cpm){window(v,cpx,cpy,"Control Panel",cpw,cph,0);cpanel_draw(v,cpx,cpy,cpw,cph);}
+        if(dgw!=3&&clv&&!clm){window(v,wcx,wcy,"Calc",wcw,wch,0);calc_draw(v,wcx,wcy,wcw,wch);}
+        if(dgw!=1&&wv&&!am)about_win(v,wx,wy);
+        if(dgw!=2&&cv&&!cm){window(v,wx2,wy2,"Clock",ww2,wh2,1);int h,m,s;get_time(&h,&m,&s);char b[9];
+            b[0]='0'+h/10;b[1]='0'+h%10;b[2]=':';b[3]='0'+m/10;b[4]='0'+m%10;b[5]=':';b[6]='0'+s/10;b[7]='0'+s%10;b[8]=0;
+            font_draw_text(v,wx2+ww2/2-18,wy2+wh2/2-4,b,0);}}
+    else if(zo==2){if(dgw!=4&&cpv&&!cpm){window(v,cpx,cpy,"Control Panel",cpw,cph,0);cpanel_draw(v,cpx,cpy,cpw,cph);}
+        if(dgw!=1&&wv&&!am)about_win(v,wx,wy);
+        if(dgw!=2&&cv&&!cm){window(v,wx2,wy2,"Clock",ww2,wh2,1);int h,m,s;get_time(&h,&m,&s);char b[9];
+            b[0]='0'+h/10;b[1]='0'+h%10;b[2]=':';b[3]='0'+m/10;b[4]='0'+m%10;b[5]=':';b[6]='0'+s/10;b[7]='0'+s%10;b[8]=0;
+            font_draw_text(v,wx2+ww2/2-18,wy2+wh2/2-4,b,0);}
+        if(dgw!=3&&clv&&!clm){window(v,wcx,wcy,"Calc",wcw,wch,0);calc_draw(v,wcx,wcy,wcw,wch);}}
+    else{if(dgw!=1&&wv&&!am)about_win(v,wx,wy);
+        if(dgw!=2&&cv&&!cm){window(v,wx2,wy2,"Clock",ww2,wh2,1);int h,m,s;get_time(&h,&m,&s);char b[9];
+            b[0]='0'+h/10;b[1]='0'+h%10;b[2]=':';b[3]='0'+m/10;b[4]='0'+m%10;b[5]=':';b[6]='0'+s/10;b[7]='0'+s%10;b[8]=0;
+            font_draw_text(v,wx2+ww2/2-18,wy2+wh2/2-4,b,0);}
+        if(dgw!=3&&clv&&!clm){window(v,wcx,wcy,"Calc",wcw,wch,0);calc_draw(v,wcx,wcy,wcw,wch);}
+        if(dgw!=4&&cpv&&!cpm){window(v,cpx,cpy,"Control Panel",cpw,cph,0);cpanel_draw(v,cpx,cpy,cpw,cph);}}
+}
+
+static void draw_all(unsigned char* v)
+{
+    if(zo==0){if(cpv&&!cpm){window(v,cpx,cpy,"Control Panel",cpw,cph,0);cpanel_draw(v,cpx,cpy,cpw,cph);}
+        if(clv&&!clm){window(v,wcx,wcy,"Calc",wcw,wch,0);calc_draw(v,wcx,wcy,wcw,wch);}
+        if(cv&&!cm){window(v,wx2,wy2,"Clock",ww2,wh2,1);int h,m,s;get_time(&h,&m,&s);char b[9];
+            b[0]='0'+h/10;b[1]='0'+h%10;b[2]=':';b[3]='0'+m/10;b[4]='0'+m%10;b[5]=':';b[6]='0'+s/10;b[7]='0'+s%10;b[8]=0;
+            font_draw_text(v,wx2+ww2/2-18,wy2+wh2/2-4,b,0);}
+        if(wv&&!am)about_win(v,wx,wy);}
+    else if(zo==1){if(cpv&&!cpm){window(v,cpx,cpy,"Control Panel",cpw,cph,0);cpanel_draw(v,cpx,cpy,cpw,cph);}
+        if(clv&&!clm){window(v,wcx,wcy,"Calc",wcw,wch,0);calc_draw(v,wcx,wcy,wcw,wch);}
+        if(wv&&!am)about_win(v,wx,wy);
+        if(cv&&!cm){window(v,wx2,wy2,"Clock",ww2,wh2,1);int h,m,s;get_time(&h,&m,&s);char b[9];
+            b[0]='0'+h/10;b[1]='0'+h%10;b[2]=':';b[3]='0'+m/10;b[4]='0'+m%10;b[5]=':';b[6]='0'+s/10;b[7]='0'+s%10;b[8]=0;
+            font_draw_text(v,wx2+ww2/2-18,wy2+wh2/2-4,b,0);}}
+    else if(zo==2){if(cpv&&!cpm){window(v,cpx,cpy,"Control Panel",cpw,cph,0);cpanel_draw(v,cpx,cpy,cpw,cph);}
+        if(wv&&!am)about_win(v,wx,wy);
+        if(cv&&!cm){window(v,wx2,wy2,"Clock",ww2,wh2,1);int h,m,s;get_time(&h,&m,&s);char b[9];
+            b[0]='0'+h/10;b[1]='0'+h%10;b[2]=':';b[3]='0'+m/10;b[4]='0'+m%10;b[5]=':';b[6]='0'+s/10;b[7]='0'+s%10;b[8]=0;
+            font_draw_text(v,wx2+ww2/2-18,wy2+wh2/2-4,b,0);}
+        if(clv&&!clm){window(v,wcx,wcy,"Calc",wcw,wch,0);calc_draw(v,wcx,wcy,wcw,wch);}}
+    else{if(wv&&!am)about_win(v,wx,wy);
+        if(cv&&!cm){window(v,wx2,wy2,"Clock",ww2,wh2,1);int h,m,s;get_time(&h,&m,&s);char b[9];
+            b[0]='0'+h/10;b[1]='0'+h%10;b[2]=':';b[3]='0'+m/10;b[4]='0'+m%10;b[5]=':';b[6]='0'+s/10;b[7]='0'+s%10;b[8]=0;
+            font_draw_text(v,wx2+ww2/2-18,wy2+wh2/2-4,b,0);}
+        if(clv&&!clm){window(v,wcx,wcy,"Calc",wcw,wch,0);calc_draw(v,wcx,wcy,wcw,wch);}
+        if(cpv&&!cpm){window(v,cpx,cpy,"Control Panel",cpw,cph,0);cpanel_draw(v,cpx,cpy,cpw,cph);}}
+    if(restart_confirm) draw_restart_dialog(v);
+}
+
+void wm_init(void){wx=80;wy=52;ww=160;wh=112;wx2=100;wy2=70;ww2=100;wh2=70;ww2_def=100;wh2_def=70;
+    wcx=95;wcy=50;wcw=140;wch=120;wcw_def=140;wch_def=120;
+    cpx=85;cpy=55;cpw=150;cph=110;cpw_def=150;cph_def=110;
+    calc_init();cpanel_init();redraw=1;}
+void wm_draw(unsigned char* v){if(redraw){for(int i=0;i<320*200;i++)v[i]=7;
+    taskbar(v,am||wv,cm||cv,clm||clv,cpm||cpv);
+    icon(v,20,164,1,"About");icon(v,60,164,2,"Clock");icon(v,100,164,4,"Calc");icon(v,140,164,6,"CPanel");
+    draw_all(v);font_draw_text(v,200,192,"Pixel Neko Next Beta",8);}redraw=0;}
+int wm_is_dragging(void){return dragging;}
+int wm_need_mouse_reset(void){int r=need_mr;need_mr=0;return r;}
+
+void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_release)
+{
+    redraw=0;tick++;
+    if(cv&&!cm&&!dragging&&!resizing&&!restart_confirm&&!clp&&!okp&&!mip&&tick>50000){tick=0;redraw=1;}
+
+    if(restart_confirm){
+        if(mb_press && mx>=115 && mx<170 && my>=104 && my<116){restart_cancel_pressed=1;need_mr=1;}
+        if(mb_release && restart_cancel_pressed){restart_cancel_pressed=0;
+            if(mx>=115 && mx<170 && my>=104 && my<116){restart_confirm=0;redraw=1;}else{redraw=1;}}
+        if(mb_press && mx>=185 && mx<240 && my>=104 && my<116){restart_ok_pressed=1;need_mr=1;}
+        if(mb_release && restart_ok_pressed){restart_ok_pressed=0;
+            if(mx>=185 && mx<240 && my>=104 && my<116){outb(0x64,0xFE);}else{redraw=1;}}
+        if(redraw) need_mr=1;return;
+    }
+
+    if(mb_press && mx>=284 && mx<300 && my>=1 && my<17){
+        restart_pressed=1;
+        int rx=284,ry=1;
+        for(int y=ry;y<ry+16;y++)for(int x=rx;x<rx+16;x++)v[y*320+x]=4;
+        for(int x=rx;x<rx+16;x++)v[ry*320+x]=0;for(int y=ry;y<ry+16;y++)v[y*320+rx]=0;
+        for(int x=rx;x<rx+16;x++)v[(ry+15)*320+x]=12;for(int y=ry;y<ry+16;y++)v[y*320+rx+15]=12;
+        for(int i=ry+3;i<ry+13;i++)for(int j=rx+5;j<rx+11;j++)v[i*320+j]=15;
+        for(int i=ry+4;i<ry+12;i++)for(int j=rx+6;j<rx+10;j++)v[i*320+j]=4;
+        for(int i=ry+2;i<ry+8;i++)for(int j=rx+7;j<rx+9;j++)v[i*320+j]=15;
+        need_mr=1;
+    }
+    if(mb_release && restart_pressed){restart_pressed=0;
+        if(mx>=284 && mx<300 && my>=1 && my<17){restart_confirm=1;redraw=1;}else{redraw=1;}}
+
+    if(mb_press&&!wv&&!am&&in_ic(mx,my,20,164)){aip=1;zo=0;icon_hl(v,20,164,"About");need_mr=1;}
+    if(mb_release&&aip){aip=0;if(in_ic(mx,my,20,164)){wv=1;am=0;redraw=1;}else{redraw=1;}}
+    if(mb_press&&!cv&&!cm&&in_ic(mx,my,60,164)){cip=1;zo=1;icon_hl(v,60,164,"Clock");need_mr=1;}
+    if(mb_release&&cip){cip=0;if(in_ic(mx,my,60,164)){cv=1;cm=0;ww2=ww2_def;wh2=wh2_def;redraw=1;}else{redraw=1;}}
+    if(mb_press&&!clv&&!clm&&in_ic(mx,my,100,164)){clip=1;zo=2;icon_hl(v,100,164,"Calc");need_mr=1;}
+    if(mb_release&&clip){clip=0;if(in_ic(mx,my,100,164)){clv=1;clm=0;wcw=wcw_def;wch=wch_def;calc_init();redraw=1;}else{redraw=1;}}
+    if(mb_press&&!cpv&&!cpm&&in_ic(mx,my,140,164)){cpip=1;zo=3;icon_hl(v,140,164,"CPanel");need_mr=1;}
+    if(mb_release&&cpip){cpip=0;if(in_ic(mx,my,140,164)){cpv=1;cpm=0;cpw=cpw_def;cph=cph_def;cpanel_init();redraw=1;}else{redraw=1;}}
+
+    if(mb_press&&in_ta(mx,my)){if(am){am=0;wv=1;wx=asx;wy=asy;}else if(wv){am=1;wv=0;asx=wx;asy=wy;}zo=0;redraw=1;}
+    if(mb_press&&in_tc(mx,my)){if(cm){cm=0;cv=1;wx2=csx;wy2=csy;ww2=ww2_def;wh2=wh2_def;}else if(cv){cm=1;cv=0;csx=wx2;csy=wy2;}zo=1;redraw=1;}
+    if(mb_press&&in_tcl(mx,my)){if(clm){clm=0;clv=1;wcx=clsx;wcy=clsy;wcw=wcw_def;wch=wch_def;calc_init();}else if(clv){clm=1;clv=0;clsx=wcx;clsy=wcy;}zo=2;redraw=1;}
+    if(mb_press&&in_tcp(mx,my)){if(cpm){cpm=0;cpv=1;cpx=cpsx;cpy=cpsy;cpw=cpw_def;cph=cph_def;cpanel_init();}else if(cpv){cpm=1;cpv=0;cpsx=cpx;cpsy=cpy;}zo=3;redraw=1;}
+
+    if(mb_press&&!dragging&&!okp&&!clp&&!mip&&!resizing){
+        int new_zo=zo;
+        if(zo==3&&cpv&&!cpm&&mx>=cpx&&mx<cpx+cpw&&my>=cpy&&my<cpy+cph)new_zo=3;
+        else if(zo==3&&clv&&!clm&&mx>=wcx&&mx<wcx+wcw&&my>=wcy&&my<wcy+wch)new_zo=2;
+        else if(zo==3&&cv&&!cm&&mx>=wx2&&mx<wx2+ww2&&my>=wy2&&my<wy2+wh2)new_zo=1;
+        else if(zo==3&&wv&&!am&&mx>=wx&&mx<wx+ww&&my>=wy&&my<wy+wh)new_zo=0;
+        else if(zo==2&&cpv&&!cpm&&mx>=cpx&&mx<cpx+cpw&&my>=cpy&&my<cpy+cph)new_zo=3;
+        else if(zo==2&&clv&&!clm&&mx>=wcx&&mx<wcx+wcw&&my>=wcy&&my<wcy+wch)new_zo=2;
+        else if(zo==2&&cv&&!cm&&mx>=wx2&&mx<wx2+ww2&&my>=wy2&&my<wy2+wh2)new_zo=1;
+        else if(zo==2&&wv&&!am&&mx>=wx&&mx<wx+ww&&my>=wy&&my<wy+wh)new_zo=0;
+        else if(zo==1&&cpv&&!cpm&&mx>=cpx&&mx<cpx+cpw&&my>=cpy&&my<cpy+cph)new_zo=3;
+        else if(zo==1&&clv&&!clm&&mx>=wcx&&mx<wcx+wcw&&my>=wcy&&my<wcy+wch)new_zo=2;
+        else if(zo==1&&cv&&!cm&&mx>=wx2&&mx<wx2+ww2&&my>=wy2&&my<wy2+wh2)new_zo=1;
+        else if(zo==1&&wv&&!am&&mx>=wx&&mx<wx+ww&&my>=wy&&my<wy+wh)new_zo=0;
+        else if(zo==0&&cpv&&!cpm&&mx>=cpx&&mx<cpx+cpw&&my>=cpy&&my<cpy+cph)new_zo=3;
+        else if(zo==0&&clv&&!clm&&mx>=wcx&&mx<wcx+wcw&&my>=wcy&&my<wcy+wch)new_zo=2;
+        else if(zo==0&&cv&&!cm&&mx>=wx2&&mx<wx2+ww2&&my>=wy2&&my<wy2+wh2)new_zo=1;
+        else if(zo==0&&wv&&!am&&mx>=wx&&mx<wx+ww&&my>=wy&&my<wy+wh)new_zo=0;
+        if(new_zo!=zo){zo=new_zo;redraw=1;}
+    }
+
+    int bx=wx+ww-42,by=wy+90;
+    if(mb_press&&wv&&!am&&in_ok(mx,my,bx,by)){okp=1;okbx=bx;okby=by;ok_btn(v,bx,by,1);need_mr=1;}
+    if(mb_release&&okp){okp=0;ok_btn(v,okbx,okby,0);if(in_ok(mx,my,okbx,okby)){wv=0;am=0;redraw=1;}else{redraw=1;}}
+
+    if(mb_press&&!dragging&&!okp&&!clp&&!mip&&!resizing){
+        if(wv&&!am){int cx=wx+ww-18,cy=wy+2;if(in_cl(mx,my,cx,cy)){clp=1;clw=1;clcx=cx;clcy=cy;cl_btn(v,cx,cy,1);need_mr=1;}}
+        if(!clp&&cv&&!cm){int cx2=wx2+ww2-18,cy2=wy2+2;if(in_cl(mx,my,cx2,cy2)){clp=1;clw=2;clcx=cx2;clcy=cy2;cl_btn(v,cx2,cy2,1);need_mr=1;}}
+        if(!clp&&clv&&!clm){int cx3=wcx+wcw-18,cy3=wcy+2;if(in_cl(mx,my,cx3,cy3)){clp=1;clw=3;clcx=cx3;clcy=cy3;cl_btn(v,cx3,cy3,1);need_mr=1;}}
+        if(!clp&&cpv&&!cpm){int cx4=cpx+cpw-18,cy4=cpy+2;if(in_cl(mx,my,cx4,cy4)){clp=1;clw=4;clcx=cx4;clcy=cy4;cl_btn(v,cx4,cy4,1);need_mr=1;}}
+    }
+    if(mb_release&&clp){cl_btn(v,clcx,clcy,0);if(in_cl(mx,my,clcx,clcy)){
+        if(clw==1){wv=0;am=0;}else if(clw==2){cv=0;cm=0;}else if(clw==3){clv=0;clm=0;}else{cpv=0;cpm=0;}redraw=1;}else{redraw=1;}clp=0;clw=0;}
+
+    if(mb_press&&!dragging&&!okp&&!clp&&!mip&&!resizing){
+        if(wv&&!am){int mx2=wx+ww-36,my2=wy+2;if(in_mi(mx,my,mx2,my2)){mip=1;miw=1;mi_btn(v,mx2,my2,1);need_mr=1;}}
+        if(!mip&&cv&&!cm){int mx3=wx2+ww2-36,my3=wy2+2;if(in_mi(mx,my,mx3,my3)){mip=1;miw=2;mi_btn(v,mx3,my3,1);need_mr=1;}}
+        if(!mip&&clv&&!clm){int mx4=wcx+wcw-36,my4=wcy+2;if(in_mi(mx,my,mx4,my4)){mip=1;miw=3;mi_btn(v,mx4,my4,1);need_mr=1;}}
+        if(!mip&&cpv&&!cpm){int mx5=cpx+cpw-36,my5=cpy+2;if(in_mi(mx,my,mx5,my5)){mip=1;miw=4;mi_btn(v,mx5,my5,1);need_mr=1;}}
+    }
+    if(mb_release&&mip){if(miw==1){am=1;wv=0;asx=wx;asy=wy;}else if(miw==2){cm=1;cv=0;csx=wx2;csy=wy2;}
+        else if(miw==3){clm=1;clv=0;clsx=wcx;clsy=wcy;}else{cpm=1;cpv=0;cpsx=cpx;cpsy=cpy;}redraw=1;mip=0;}
+
+    // Clock 缩放
+    if(mb_press&&cv&&!cm&&!dragging&&!resizing){
+        int d=rs_dir(mx,my,wx2,wy2,ww2,wh2);
+        if(d){resizing=1;rsdir=d;rsox=wx2;rsoy=wy2;rsow=ww2;rsoh=wh2;}
+    }
+    if(mb&1&&resizing){
+        int nx=wx2,ny=wy2,nw=ww2,nh=wh2;
+        if(rsdir==1||rsdir==3){nx=mx;nw=rsox+rsow-mx;}if(rsdir==2||rsdir==4){nw=mx-wx2;}
+        if(rsdir==1||rsdir==2){ny=my;nh=rsoy+rsoh-my;}if(rsdir==3||rsdir==4){nh=my-wy2;}
+        if(nw<60){if(rsdir==1||rsdir==3)nx=rsox+rsow-60;nw=60;}
+        if(nh<40){if(rsdir==1||rsdir==2)ny=rsoy+rsoh-40;nh=40;}
+        if(nw!=ww2||nh!=wh2||nx!=wx2||ny!=wy2){wx2=nx;wy2=ny;ww2=nw;wh2=nh;redraw=1;}
+    }
+    if(mb_release&&resizing){resizing=0;redraw=1;}
+
+    if(mb_press&&clv&&!clm&&!clp&&!mip){calc_click(v,mx,my,wcx,wcy,wcw,wch);redraw=1;}
+    if(mb_press&&cpv&&!cpm&&!clp&&!mip){cpanel_click(v,mx,my,cpx,cpy,cpw,cph);redraw=1;}
+
+    if(mb&1&&!okp&&!clp&&!mip&&!resizing){
+        if(!dragging){
+            if(wv&&!am&&mx>=wx&&mx<wx+ww&&my>=wy&&my<wy+12){zo=0;dragging=1;dgw=1;dgo=mx-wx;dgoy=my-wy;owx=wx;owy=wy;}
+            else if(cv&&!cm&&mx>=wx2&&mx<wx2+ww2&&my>=wy2&&my<wy2+12){zo=1;dragging=1;dgw=2;dgo=mx-wx2;dgoy=my-wy2;owx2=wx2;owy2=wy2;}
+            else if(clv&&!clm&&mx>=wcx&&mx<wcx+wcw&&my>=wcy&&my<wcy+12){zo=2;dragging=1;dgw=3;dgo=mx-wcx;dgoy=my-wcy;owcx=wcx;owcy=wcy;}
+            else if(cpv&&!cpm&&mx>=cpx&&mx<cpx+cpw&&my>=cpy&&my<cpy+12){zo=3;dragging=1;dgw=4;dgo=mx-cpx;dgoy=my-cpy;ocpx=cpx;ocpy=cpy;}
+        }
+        if(dragging){
+            int nwx=mx-dgo,nwy=my-dgoy;
+            int nww=dgw==1?ww:dgw==2?ww2:dgw==3?wcw:cpw;
+            int nwh=dgw==1?wh:dgw==2?wh2:dgw==3?wch:cph;
+            if(nwx<0)nwx=0;if(nwy<0)nwy=0;if(nwx+nww>320)nwx=320-nww;if(nwy+nwh>200)nwy=200-nwh;
+            int*cwx=dgw==1?&wx:dgw==2?&wx2:dgw==3?&wcx:&cpx;
+            int*cwy=dgw==1?&wy:dgw==2?&wy2:dgw==3?&wcy:&cpy;
+            if(nwx!=*cwx||nwy!=*cwy){
+                int ox=dgw==1?owx:dgw==2?owx2:dgw==3?owcx:ocpx;
+                int oy=dgw==1?owy:dgw==2?owy2:dgw==3?owcy:ocpy;
+                int ow=dgw==1?ww:dgw==2?ww2:dgw==3?wcw:cpw;
+                int oh=dgw==1?wh:dgw==2?wh2:dgw==3?wch:cph;
+                for(int y2=oy;y2<oy+oh+2&&y2<200;y2++)for(int x2=ox;x2<ox+ow+2&&x2<320;x2++)v[y2*320+x2]=7;
+                taskbar(v,am||wv,cm||cv,clm||clv,cpm||cpv);
+                icon(v,20,164,1,"About");icon(v,60,164,2,"Clock");icon(v,100,164,4,"Calc");icon(v,140,164,6,"CPanel");
+                draw_others(v, dgw);box(v,nwx,nwy,nww,nwh);
+                if(dgw==1){owx=nwx;owy=nwy;}else if(dgw==2){owx2=nwx;owy2=nwy;}
+                else if(dgw==3){owcx=nwx;owcy=nwy;}else{ocpx=nwx;ocpy=nwy;}
+                *cwx=nwx;*cwy=nwy;
+            }
+        }
+    }else{if(dragging){dragging=0;dgw=0;redraw=1;}}
+    if(redraw) need_mr=1;
+}
+
+[文件结束 - 共433行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 14: wm.h
+********************************************************************************
+
+#ifndef WM_H
+#define WM_H
+
+void wm_init(void);
+void wm_update(unsigned char* v, int mx, int my, int mb, int mb_press, int mb_release);
+void wm_draw(unsigned char* v);
+int wm_is_dragging(void);
+int wm_need_mouse_reset(void);
+
+#endif
+
+[文件结束 - 共10行]
+
+--------------------------------------------------------------------------------
+
+
+********************************************************************************
+文件 15: 编译.bat
+********************************************************************************
+
+@echo off
+chcp 65001 > nul
+title TBMK GUI 编译
+
+:: ===== Build计数器 =====
+if not exist build.txt echo 1 > build.txt
+for /f %%i in ('powershell -Command "Get-Content build.txt"') do set BUILD=%%i
+
+:: 获取月日
+for /f %%i in ('powershell -Command "Get-Date -Format 'Md'"') do set MD=%%i
+
+:: 更新 version.h
+echo #ifndef VERSION_H > version.h
+echo #define VERSION_H >> version.h
+echo #define VER_STRING1       "Codename Pixel Neko NEXT" >> version.h
+echo #define KERNEL_NAME       "TBMK GUI Shell" >> version.h
+echo #define KERNEL_CODENAME   "Pixel Neko" >> version.h
+echo #define KERNEL_VERSION    "C2.0" >> version.h
+echo #define KERNEL_BUILD      "%BUILD%.%MD%" >> version.h
+echo #define KERNEL_COPYRIGHT  "(C) 2026 Tairitsu_tty" >> version.h
+echo #define KERNEL_AUTHOR     "Tairitsu_tty" >> version.h
+echo #define VER_STRING2       KERNEL_BUILD >> version.h
+echo #define VER_STRING3       KERNEL_COPYRIGHT >> version.h
+echo #endif >> version.h
+
+echo Build: %BUILD%.%MD%
+
+del *.o *.bin *.elf *.exe os.img pad.bin 2>nul
+
+nasm -f bin boot.asm -o boot.bin || (pause & exit /b)
+nasm -f elf32 kernel_entry.asm -o entry.o || (pause & exit /b)
+i686-elf-gcc -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c kernel.c -o kernel.o || (pause & exit /b)
+i686-elf-gcc -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c mouse.c -o mouse.o || (pause & exit /b)
+i686-elf-gcc -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c font.c -o font.o || (pause & exit /b)
+i686-elf-gcc -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c wm.c -o wm.o || (pause & exit /b)
+i686-elf-gcc -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c calc.c -o calc.o || (pause & exit /b)
+i686-elf-gcc -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c cpanel.c -o cpanel.o || (pause & exit /b)
+
+i686-elf-ld -T link.ld entry.o kernel.o mouse.o font.o wm.o calc.o cpanel.o -o kernel.elf || (pause & exit /b)
+
+objcopy -O binary kernel.elf kernel.bin
+copy /b boot.bin + kernel.bin os.img > nul
+
+set /a BUILD+=1
+echo %BUILD% > build.txt
+
+for %%A in (kernel.bin) do echo 内核: %%~zA 字节
+for %%A in (os.img) do echo 镜像: %%~zA 字节
+del *.o *.elf 2>nul
+echo [✓] 完成！
+
+qemu-system-i386 -drive file=os.img,format=raw,if=floppy -vga std -boot a
+
+[文件结束 - 共52行]
+
+--------------------------------------------------------------------------------
+
+
+================================================================================
+收集完成
+总文件数: 15
+完成时间: 2026-08-21 16:03:02
+================================================================================

@@ -1,0 +1,18 @@
+# build outputs
+/build/
+
+# compiler and image artifacts
+*.o
+*.elf
+*.iso
+*.img
+*.bin
+
+# editor / OS noise
+Thumbs.db
+.DS_Store
+
+# local build logs
+*.log
+__pycache__/
+

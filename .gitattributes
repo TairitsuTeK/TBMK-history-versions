@@ -1,0 +1,9 @@
+* text=auto
+
+# Scripts and CI files must keep LF even on Windows.
+*.sh text eol=lf
+Makefile text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf

@@ -1,0 +1,61 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            nasm gcc-multilib binutils \
+            grub-pc-bin grub-common xorriso mtools python3
+
+      - name: Build all versions
+        run: python3 tools/build.py --all --out build
+
+      - name: Summarize
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          path = pathlib.Path("build/manifest.json")
+          if not path.exists():
+              print("manifest.json missing")
+              raise SystemExit(1)
+          data = json.loads(path.read_text(encoding="utf-8"))
+          print(f"built {data['total'] - data['failed']}/{data['total']} versions")
+          for item in data["versions"]:
+              if item["status"] != "built":
+                  print("FAILED:", item["path"])
+          PY
+
+      - name: Upload images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tbmk-images
+          path: |
+            build/**/*.img
+            build/**/*.iso
+            build/**/*.elf
+            build/**/build.log
+            build/manifest.json
+          if-no-files-found: warn
+          retention-days: 30

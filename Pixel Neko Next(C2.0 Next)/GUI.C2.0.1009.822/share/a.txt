@@ -1,0 +1,4 @@
+tairitsutek@vmwarehost:~/T.M.B.K/Pixel Neko Next$ file disk.img
+disk.img: DOS/MBR boot sector, code offset 0x3c+2, OEM-ID "mkfs.fat", sectors/cluster 128, reserved sectors 128, root entries 2048, Media descriptor 0xf8, sectors/FAT 128, sectors/track 63, heads 128, sectors 4194288 (volumes > 32 MB), serial number 0x8f3b74a0, unlabeled, FAT (16 bit)
+tairitsutek@vmwarehost:~/T.M.B.K/Pixel Neko Next$ 
+

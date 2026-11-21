@@ -1,0 +1,2628 @@
+
+============================================================
+[boot.asm]
+============================================================
+
+org 0x7C00
+bits 16
+
+start:
+    jmp short real_start
+    nop
+
+; ============ FAT16 BPB 占位符 ============
+bpb_oem:            db "T.B.M.K. "
+bpb_bytes_per_sec:  dw 512
+bpb_sec_per_cluster: db 8
+bpb_reserved:       dw 1
+bpb_num_fats:       db 2
+bpb_root_entries:   dw 512
+bpb_total_sec16:    dw 0
+bpb_media:          db 0xF8
+bpb_sec_per_fat:    dw 16
+bpb_sec_per_track:  dw 63
+bpb_num_heads:      dw 16
+bpb_hidden:         dd 0
+bpb_total_sec32:    dd 0
+bpb_drive_num:      db 0x80
+bpb_reserved2:      db 0
+bpb_ext_sig:        db 0x29
+bpb_vol_id:         dd 0x12345678
+bpb_vol_label:      db "TBMK_DISK  "
+bpb_fs_type:        db "FAT16   "
+
+real_start:
+    cli
+    xor ax, ax
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    mov sp, 0x7B00
+
+    mov [boot_drive], dl
+    mov byte [0x7F60], dl
+
+    in al, 0x92
+    or al, 2
+    out 0x92, al
+
+    mov ah, 0x00
+    mov dl, [boot_drive]
+    int 0x13
+
+    ; CPU检测 (不变)
+    mov eax, 0
+    cpuid
+    mov [0x7F00], ebx
+    mov [0x7F04], edx
+    mov [0x7F08], ecx
+    mov byte [0x7F0C], 0
+
+    mov eax, 0x80000000
+    cpuid
+    cmp eax, 0x80000004
+    jb no_cpu_name
+
+    mov eax, 0x80000002
+    cpuid
+    mov [0x7F10], eax
+    mov [0x7F14], ebx
+    mov [0x7F18], ecx
+    mov [0x7F1C], edx
+
+    mov eax, 0x80000003
+    cpuid
+    mov [0x7F20], eax
+    mov [0x7F24], ebx
+    mov [0x7F28], ecx
+    mov [0x7F2C], edx
+
+    mov eax, 0x80000004
+    cpuid
+    mov [0x7F30], eax
+    mov [0x7F34], ebx
+    mov [0x7F38], ecx
+    mov [0x7F3C], edx
+
+    mov byte [0x7F40], 0
+    jmp cpu_done
+
+no_cpu_name:
+    mov byte [0x7F10], 0
+cpu_done:
+
+    mov dword [0x7F70], 0xB8000
+
+    ; 根据启动驱动器选择 CHS 参数
+    cmp byte [boot_drive], 0x80
+    je hdd_boot
+
+    ; ===== 软盘启动：LBA 1 = CHS (0/0/2) =====
+    mov ax, 0x0201        ; AH=02(读), AL=01(先读1个扇区获取几何参数)
+    mov ch, 0
+    mov cl, 2
+    mov dh, 0
+    mov dl, [boot_drive]
+    mov bx, 0x1000
+    int 0x13
+    jc disk_error
+
+    ; 继续读剩余 49 个扇区
+    mov ah, 0x02
+    mov al, 49
+    mov ch, 0
+    mov cl, 3           ; 从扇区 3 继续
+    mov dh, 0
+    mov dl, [boot_drive]
+    mov bx, 0x1200      ; 0x1000 + 512
+    int 0x13
+    jc disk_error
+    jmp load_done
+
+hdd_boot:
+    ; ===== 硬盘启动：LBA 65 = 尝试用 CHS 读 =====
+    ; QEMU 硬盘几何: 63 扇区/道, 16 磁头
+    ; LBA 65 = 65/63 = 1 磁道余 2 → 柱面 0, 磁头 1, 扇区 3
+    mov ax, 0x0201        ; 先读 1 个扇区测试
+    mov ch, 0              ; 柱面 0
+    mov cl, 3              ; 扇区 3
+    mov dh, 1              ; 磁头 1
+    mov dl, 0x80
+    mov bx, 0x1000
+    int 0x13
+    jc try_hdd_chs2
+
+    ; 继续读剩余 49 个扇区
+    mov ah, 0x02
+    mov al, 49
+    mov ch, 0
+    mov cl, 4
+    mov dh, 1
+    mov dl, 0x80
+    mov bx, 0x1200
+    int 0x13
+    jc disk_error
+    jmp load_done
+
+try_hdd_chs2:
+    ; 尝试柱面 1, 磁头 0, 扇区 2 (另一种 CHS 映射)
+    mov ax, 0x0201
+    mov ch, 1
+    mov cl, 2
+    mov dh, 0
+    mov dl, 0x80
+    mov bx, 0x1000
+    int 0x13
+    jc disk_error
+
+    mov ah, 0x02
+    mov al, 49
+    mov ch, 1
+    mov cl, 3
+    mov dh, 0
+    mov dl, 0x80
+    mov bx, 0x1200
+    int 0x13
+    jc disk_error
+
+load_done:
+    cli
+    lgdt [gdt_ptr]
+    mov eax, cr0
+    or eax, 1
+    mov cr0, eax
+    jmp 0x08:0x1000
+
+disk_error:
+    mov si, err_msg
+    mov ah, 0x0E
+print_loop:
+    lodsb
+    test al, al
+    jz hang
+    int 0x10
+    jmp print_loop
+hang:
+    cli
+halt_loop:
+    hlt
+    jmp halt_loop
+
+boot_drive db 0
+err_msg db 'Disk Error!', 0
+
+align 4
+gdt_start:
+    dd 0, 0
+    dd 0x0000FFFF, 0x00CF9A00
+    dd 0x0000FFFF, 0x00CF9200
+gdt_end:
+gdt_ptr:
+    dw gdt_end - gdt_start - 1
+    dd gdt_start
+
+times 510 - ($ - $$) db 0
+dw 0xAA55
+
+============================================================
+[kernel_entry.asm]
+============================================================
+
+bits 32
+global _start
+extern _kernel_main
+
+section .text
+_start:
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+    mov esp, 0x90000
+
+    call _kernel_main
+    
+    cli
+    hlt
+    jmp $
+
+============================================================
+[kernel.c]
+============================================================
+
+#include "keyboard.h"
+#include "shell.h"
+#include "version.h"
+#include "except.h"
+#include "syscall.h"
+#include "disk.h"
+#include "port.h"
+#include "vga.h"
+#include "scancode.h"
+
+#define PAGE_SIZE 4096
+#define MAX_PAGES 65536
+
+#define KERNEL_START_LBA 65
+
+#define CMOS_ADDR_PORT  0x70
+#define CMOS_DATA_PORT  0x71
+#define CMOS_EXTMEM_LOW  0x17
+#define CMOS_EXTMEM_HIGH 0x18
+
+void kernel_main(void) __attribute__((noreturn));
+
+static unsigned char mem_bitmap[MAX_PAGES / 8];
+unsigned int total_pages = 0;
+unsigned int allocated_pages = 0;
+
+volatile unsigned int timer_ticks = 0;
+
+int cursor_x = 40;
+int cursor_y = 10;
+unsigned short cursor_backup = COLOR_WHITE_ON_BLUE << 8 | ' ';
+
+static unsigned long long idt[256] __attribute__((aligned(8)));
+
+// CMOS 读取
+static unsigned int cmos_get_memory(void)
+{
+    outb(CMOS_ADDR_PORT, CMOS_EXTMEM_LOW);
+    unsigned char low = inb(CMOS_DATA_PORT);
+    outb(CMOS_ADDR_PORT, CMOS_EXTMEM_HIGH);
+    unsigned char high = inb(CMOS_DATA_PORT);
+
+    return ((unsigned int)high << 8) | low;
+}
+
+// 探测物理内存总量
+static unsigned int detect_total_memory(void)
+{
+    unsigned int ext_kb = cmos_get_memory();
+    if (ext_kb == 0 || ext_kb > 1048576) {
+        ext_kb = 130048;
+    }
+    unsigned int pages = (1024 + ext_kb) * 1024 / PAGE_SIZE;
+    return (pages > MAX_PAGES) ? MAX_PAGES : pages;
+}
+
+// 位图操作
+static void bitmap_set(unsigned int page, int used)
+{
+    if (page < total_pages) {
+        if (used)
+            mem_bitmap[page / 8] |=  (1 << (page % 8));
+        else
+            mem_bitmap[page / 8] &= ~(1 << (page % 8));
+    }
+}
+
+static int bitmap_test(unsigned int page)
+{
+    if (page >= total_pages) return 1;
+    return (mem_bitmap[page / 8] & (1 << (page % 8))) != 0;
+}
+
+// 内存初始化
+static void mm_init(void)
+{
+    total_pages = detect_total_memory();
+
+    for (unsigned int i = 0; i < (total_pages + 7) / 8; i++)
+        mem_bitmap[i] = 0;
+
+    unsigned int esp_val;
+    __asm__ volatile("mov %%esp, %0" : "=r"(esp_val));
+
+    unsigned int kernel_end = esp_val + 0x40000;
+    if (kernel_end > 0x90000) kernel_end = 0x90000;
+
+    unsigned int start_page = 0x1000 / PAGE_SIZE;
+    unsigned int end_page = (kernel_end + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (unsigned int i = start_page; i < end_page && i < total_pages; i++)
+        bitmap_set(i, 1);
+
+    // VGA 显存
+    unsigned int vga_start = 0xA0000 / PAGE_SIZE;
+    unsigned int vga_end   = (0xC0000 + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (unsigned int i = vga_start; i < vga_end && i < total_pages; i++)
+        bitmap_set(i, 1);
+
+    // 页 0-3
+    for (unsigned int i = 0; i < start_page && i < total_pages; i++)
+        bitmap_set(i, 1);
+
+    allocated_pages = 0;
+    for (unsigned int i = 0; i < total_pages; i++)
+        if (bitmap_test(i)) allocated_pages++;
+}
+
+unsigned int alloc_page(void)
+{
+    for (unsigned int i = 1; i < total_pages; i++) {
+        if (!bitmap_test(i)) {
+            bitmap_set(i, 1);
+            allocated_pages++;
+            return i * PAGE_SIZE;
+        }
+    }
+    return 0;
+}
+
+void free_page(unsigned int addr)
+{
+    unsigned int page = addr / PAGE_SIZE;
+    if (page > 0 && page < total_pages && bitmap_test(page)) {
+        bitmap_set(page, 0);
+        allocated_pages--;
+    }
+}
+
+unsigned int alloc_pages(unsigned int count)
+{
+    if (count == 0) return 0;
+    for (unsigned int i = 1; i < total_pages; i++) {
+        if (!bitmap_test(i)) {
+            unsigned int j;
+            for (j = 1; j < count; j++)
+                if (bitmap_test(i + j)) break;
+            if (j == count) {
+                for (unsigned int k = 0; k < count; k++) {
+                    bitmap_set(i + k, 1);
+                    allocated_pages++;
+                }
+                return i * PAGE_SIZE;
+            }
+            i += j;
+        }
+    }
+    return 0;
+}
+
+// IDT
+static void set_idt_entry(int num, void* handler)
+{
+    unsigned int addr = (unsigned int)handler;
+    idt[num] = ((unsigned long long)(addr & 0xFFFF))
+             | (0x08ULL << 16)
+             | (0x8EULL << 40)
+             | ((unsigned long long)(addr >> 16) << 48);
+}
+
+static void load_idt(void)
+{
+    struct { unsigned short limit; unsigned int base; }
+    __attribute__((packed)) idt_ptr;
+    idt_ptr.limit = sizeof(idt) - 1;
+    idt_ptr.base = (unsigned int)&idt;
+    __asm__ volatile("lidt %0" : : "m"(idt_ptr));
+}
+
+// 光标
+static void cursor_draw(void)
+{
+    int pos = cursor_y * VGA_WIDTH + cursor_x;
+    cursor_backup = vga_get_char(cursor_x, cursor_y);
+    unsigned short ch = cursor_backup & 0x00FF;
+    vga_put_char(cursor_x, cursor_y, ch, COLOR_BLACK_ON_WHITE);
+}
+
+// PIT
+static void pit_init(unsigned int hz)
+{
+    unsigned int divisor = 1193180 / hz;
+    outb(0x43, 0x36);
+    outb(0x40, divisor & 0xFF);
+    outb(0x40, divisor >> 8);
+}
+
+__attribute__((naked)) void pit_handler(void)
+{
+    __asm__ volatile(
+        "pushal\n"
+        "incl _timer_ticks\n"
+        "movb $0x20, %al\n"
+        "outb %al, $0x20\n"
+        "popal\n"
+        "iret\n"
+    );
+}
+
+// VGA 辅助
+static void disable_cursor(void)
+{
+    outb(0x3D4, 0x0A);
+    outb(0x3D5, 0x20);
+}
+
+static void beep(void)
+{
+    outb(0x43, 0xB6);
+    outb(0x42, 0xA9);
+    outb(0x42, 0x04);
+    unsigned char tmp = inb(0x61);
+    outb(0x61, tmp | 0x03);
+    for (volatile int i = 0; i < 500000; i++) { }
+    outb(0x61, tmp & 0xFC);
+}
+
+static void print_string(int row, const char *str)
+{
+    int pos = row * VGA_WIDTH + 2;
+    volatile unsigned short *vga = (volatile unsigned short *)VGA_BUFFER;
+    while (*str) {
+        if ((pos % VGA_WIDTH) >= 78) break;
+        vga[pos++] = (COLOR_WHITE_ON_BLUE << 8) | *str++;
+    }
+}
+
+static void draw_box(void)
+{
+    vga_put_char(0, 1, BOX_TL, COLOR_WHITE_ON_BLUE);
+    for (int i = 1; i < 79; i++) vga_put_char(i, 1, BOX_HZ, COLOR_WHITE_ON_BLUE);
+    vga_put_char(79, 1, BOX_TR, COLOR_WHITE_ON_BLUE);
+
+    for (int y = 2; y < 23; y++) {
+        vga_put_char(0, y, BOX_VT, COLOR_WHITE_ON_BLUE);
+        vga_put_char(79, y, BOX_VT, COLOR_WHITE_ON_BLUE);
+    }
+
+    vga_put_char(0, 23, BOX_BL, COLOR_WHITE_ON_BLUE);
+    for (int i = 1; i < 79; i++) vga_put_char(i, 23, BOX_HZ, COLOR_WHITE_ON_BLUE);
+    vga_put_char(79, 23, BOX_BR, COLOR_WHITE_ON_BLUE);
+}
+
+// 等待按键超时循环（提取公共逻辑）
+static void wait_for_reboot(void)
+{
+    unsigned char ctrl = 0, alt = 0;
+    while (1) {
+        if (inb(0x64) & 0x01) {
+            unsigned char sc = inb(0x60);
+            if (sc == SC_LCTRL) ctrl = 1;
+            if (sc == SC_RELEASE_CTRL) ctrl = 0;
+            if (sc == SC_LALT) alt = 1;
+            if (sc == SC_RELEASE_ALT) alt = 0;
+            if (sc == SC_KP_DOT && ctrl && alt && !(sc & SC_RELEASE_MASK)) {
+                while (inb(0x64) & 0x02);
+                outb(0x64, 0xFE);
+            }
+        }
+    }
+}
+
+// 内核主函数
+void kernel_main(void)
+{
+    disable_cursor();
+    beep();
+    mm_init();
+
+    unsigned char boot_drive = *(unsigned char*)0x7F60;
+
+    if (boot_drive == 0x00) {
+        vga_fill(' ', COLOR_WHITE_ON_BLUE);
+        draw_box();
+
+        print_string(5,  "  T.B.M.K. " KERNEL_VERSION " Installer");
+        print_string(6,  "  ==============================");
+        print_string(8,  "  [1] Install to hard disk");
+        print_string(9,  "  [2] Boot from hard disk");
+        print_string(10, "  [3] Try live system");
+        print_string(12, "  Press 1, 2 or 3 to select...");
+        print_string(14, "  Ctrl+Alt+Del to reboot at any time.");
+
+        unsigned char ctrl = 0, alt = 0;
+        int mode = 0;
+
+        while (mode == 0) {
+            if (inb(0x64) & 0x01) {
+                unsigned char sc = inb(0x60);
+                if (sc == SC_LCTRL) ctrl = 1;
+                if (sc == SC_RELEASE_CTRL) ctrl = 0;
+                if (sc == SC_LALT) alt = 1;
+                if (sc == SC_RELEASE_ALT) alt = 0;
+
+                if (sc == SC_KP_DOT && ctrl && alt && !(sc & SC_RELEASE_MASK)) {
+                    while (inb(0x64) & 0x02);
+                    outb(0x64, 0xFE);
+                }
+                if (sc == SC_1) mode = 1;
+                if (sc == SC_2) mode = 2;
+                if (sc == SC_3) mode = 3;
+            }
+        }
+
+        if (mode == 1) {
+            if (!disk_detect()) {
+                print_string(16, "  No hard disk detected!");
+                print_string(17, "  Install aborted.");
+                print_string(18, "  Press Ctrl+Alt+Del to reboot.");
+                wait_for_reboot();
+            }
+
+            print_string(16, "  Installing...");
+
+            unsigned char* kernel = (unsigned char*)0x1000;
+            int write_failed = 0;
+            for (int sec = 0; sec < 50; sec++) {
+                if (disk_write(KERNEL_START_LBA + sec, kernel + sec * 512) != 0) {
+                    write_failed = 1;
+                    break;
+                }
+            }
+
+            if (write_failed) {
+                print_string(18, "  Write kernel failed!");
+                wait_for_reboot();
+            }
+
+            unsigned char orig_sector[512];
+            disk_read(0, orig_sector);
+
+            unsigned char buf[512];
+            unsigned char* boot_sector = (unsigned char*)0x7C00;
+            for (int i = 0; i < 512; i++) buf[i] = boot_sector[i];
+
+            if (orig_sector[11] == 0x00 && orig_sector[12] == 0x02) {
+                for (int i = 3; i < 62; i++) buf[i] = orig_sector[i];
+            }
+
+            buf[500] = KERNEL_START_LBA & 0xFF;
+            buf[501] = (KERNEL_START_LBA >> 8) & 0xFF;
+            buf[502] = (KERNEL_START_LBA >> 16) & 0xFF;
+            buf[503] = (KERNEL_START_LBA >> 24) & 0xFF;
+            buf[510] = 0x55;
+            buf[511] = 0xAA;
+
+            if (disk_write(0, buf) != 0) {
+                print_string(18, "  Write boot sector failed!");
+                wait_for_reboot();
+            }
+
+            print_string(18, "  Installation complete!");
+            print_string(19, "  Remove floppy and reboot.");
+            print_string(20, "  Ctrl+Alt+Del to reboot.");
+            wait_for_reboot();
+        }
+
+        if (mode == 2) {
+            print_string(16, "  Remove floppy disk, then");
+            print_string(17, "  press Ctrl+Alt+Del to reboot.");
+            print_string(18, "  System will boot from hard disk.");
+            wait_for_reboot();
+        }
+    }
+
+    set_idt_entry(0, except_handler_0);
+    set_idt_entry(6, except_handler_6);
+    set_idt_entry(13, except_handler_13);
+    set_idt_entry(14, except_handler_14);
+    set_idt_entry(0x20, pit_handler);
+    set_idt_entry(0x80, syscall_handler);
+    set_idt_entry(0x21, keyboard_handler);
+    load_idt();
+
+    keyboard_init();
+    pit_init(100);
+    outb(0x21, inb(0x21) & 0xFE);
+
+    vga_fill(' ', COLOR_WHITE_ON_BLUE);
+
+    for (int i = 0; i < VGA_WIDTH; i++)
+        vga_put_char(i, 0, ' ', COLOR_BLACK_ON_WHITE);
+
+    char *title = " T.B.M.K. Micro Kernel - Main Page ";
+    int title_len = 0;
+    while (title[title_len]) title_len++;
+    int title_start = (VGA_WIDTH - title_len) / 2;
+    for (int i = 0; i < title_len; i++)
+        vga_put_char(title_start + i, 0, title[i], COLOR_BLACK_ON_WHITE);
+
+    print_string(2,  KERNEL_FULL_STRING);
+    print_string(4,  "  _______   ______   .___  ___.  __  ___  ");
+    print_string(5,  " |       | |   _  |  |   ||   | |  |/  /  ");
+    print_string(6,  " |_     _| |  |_) |  |   ||   | |  '  /   ");
+    print_string(7,  "   |   |   |   _ <   |   ||   | |    <    ");
+    print_string(8,  "   |   |   |  |_) |  |   ||   | |  .  \\  ");
+    print_string(9,  "   |___|   |______/  |___||___| |__|\\__\\ ");
+    print_string(11, "   Tiny Bare-Metal Micro Kernel");
+    print_string(21, "  [!][Arrow keys] Move cursor");
+    print_string(22, "  [!][Ctrl+S] Shell | [Ctrl+Alt+Del] Reboot");
+
+    draw_box();
+
+    shell_init();
+    cursor_draw();
+
+    while (1) {
+        __asm__ volatile("hlt");
+    }
+}
+
+============================================================
+[keyboard.c]
+============================================================
+
+#include "keyboard.h"
+#include "shell.h"
+#include "port.h"
+#include "vga.h"
+#include "scancode.h"
+
+extern int cursor_x;
+extern int cursor_y;
+extern unsigned short cursor_backup;
+
+static void reboot(void)
+{
+    while (inb(0x64) & 0x02);
+    outb(0x64, 0xFE);
+}
+
+static const char* get_key_name_raw(unsigned char scancode)
+{
+    unsigned char code = scancode & 0x7F;
+    switch (code) {
+        case SC_ESC:         return "Esc";
+        case SC_1:           return "1";
+        case SC_2:           return "2";
+        case SC_3:           return "3";
+        case SC_4:           return "4";
+        case SC_5:           return "5";
+        case SC_6:           return "6";
+        case SC_7:           return "7";
+        case SC_8:           return "8";
+        case SC_9:           return "9";
+        case SC_0:           return "0";
+        case SC_MINUS:       return "-";
+        case SC_EQUAL:       return "=";
+        case SC_BACKSPACE:   return "Backspace";
+        case SC_TAB:         return "Tab";
+        case SC_Q:           return "Q";
+        case SC_W:           return "W";
+        case SC_E:           return "E";
+        case SC_R:           return "R";
+        case SC_T:           return "T";
+        case SC_Y:           return "Y";
+        case SC_U:           return "U";
+        case SC_I:           return "I";
+        case SC_O:           return "O";
+        case SC_P:           return "P";
+        case SC_LBRACKET:    return "[";
+        case SC_RBRACKET:    return "]";
+        case SC_ENTER:       return "Enter";
+        case SC_LCTRL:       return "Ctrl";
+        case SC_A:           return "A";
+        case SC_S:           return "S";
+        case SC_D:           return "D";
+        case SC_F:           return "F";
+        case SC_G:           return "G";
+        case SC_H:           return "H";
+        case SC_J:           return "J";
+        case SC_K:           return "K";
+        case SC_L:           return "L";
+        case SC_SEMICOLON:   return ";";
+        case SC_QUOTE:       return "'";
+        case SC_BACKTICK:    return "`";
+        case SC_LSHIFT:      return "LShift";
+        case SC_BACKSLASH:   return "\\";
+        case SC_Z:           return "Z";
+        case SC_X:           return "X";
+        case SC_C:           return "C";
+        case SC_V:           return "V";
+        case SC_B:           return "B";
+        case SC_N:           return "N";
+        case SC_M:           return "M";
+        case SC_COMMA:       return ",";
+        case SC_DOT:         return ".";
+        case SC_SLASH:       return "/";
+        case SC_RSHIFT:      return "RShift";
+        case SC_KP_STAR:     return "Keypad *";
+        case SC_LALT:        return "Alt";
+        case SC_SPACE:       return "Space";
+        case SC_CAPSLOCK:    return "CapsLock";
+        case SC_F1:          return "F1";
+        case SC_F2:          return "F2";
+        case SC_F3:          return "F3";
+        case SC_F4:          return "F4";
+        case SC_F5:          return "F5";
+        case SC_F6:          return "F6";
+        case SC_F7:          return "F7";
+        case SC_F8:          return "F8";
+        case SC_F9:          return "F9";
+        case SC_F10:         return "F10";
+        case SC_NUMLOCK:     return "NumLock";
+        case SC_SCROLLLOCK:  return "ScrollLock";
+        case SC_KP_7:        return "Keypad 7";
+        case SC_KP_8:        return "Keypad 8";
+        case SC_KP_9:        return "Keypad 9";
+        case SC_KP_MINUS:    return "Keypad -";
+        case SC_KP_4:        return "Keypad 4";
+        case SC_KP_5:        return "Keypad 5";
+        case SC_KP_6:        return "Keypad 6";
+        case SC_KP_PLUS:     return "Keypad +";
+        case SC_KP_1:        return "Keypad 1";
+        case SC_KP_2:        return "Keypad 2";
+        case SC_KP_3:        return "Keypad 3";
+        case SC_KP_0:        return "Keypad 0";
+        case SC_KP_DOT:      return "Keypad .";
+        case SC_F11:         return "F11";
+        case SC_F12:         return "F12";
+        case SC_LWIN:        return "LWin";
+        case SC_RWIN:        return "RWin";
+        default:             return "Unknown";
+    }
+}
+
+static void show_status(const char* str)
+{
+    int pos = 24 * VGA_WIDTH;
+    volatile unsigned short *vga = (volatile unsigned short *)VGA_BUFFER;
+    for (int i = 0; i < 40; i++)
+        vga[pos + i] = (COLOR_WHITE_ON_BLUE << 8) | ' ';
+    vga_print(0, 24, "Key Status:[", COLOR_WHITE_ON_BLUE);
+    vga_print(13, 24, str, COLOR_WHITE_ON_BLUE);
+    int len = 0;
+    while (str[len]) len++;
+    vga_put_char(13 + len, 24, ']', COLOR_WHITE_ON_BLUE);
+}
+
+__attribute__((naked)) void keyboard_handler(void)
+{
+    __asm__ volatile(
+        "pushal\n"
+        "cld\n"
+        "call _keyboard_callback\n"
+        "popal\n"
+        "iret\n"
+    );
+}
+
+void keyboard_callback(void)
+{
+    unsigned char scancode = inb(0x60);
+    static unsigned char ctrl_pressed = 0;
+    static unsigned char alt_pressed = 0;
+    static unsigned char ext_key = 0;
+    static char key_status[40];
+
+    if (scancode == SC_EXTENDED) {
+        ext_key = 1;
+        outb(0x20, 0x20);
+        return;
+    }
+
+    const char* name = get_key_name_raw(scancode);
+
+    if (scancode & SC_RELEASE_MASK) {
+        int i = 0;
+        while (name[i] && i < 20) { key_status[i] = name[i]; i++; }
+        const char* rel = " Released";
+        int j = 0;
+        while (rel[j] && (i + j) < 39) { key_status[i + j] = rel[j]; j++; }
+        key_status[i + j] = '\0';
+    } else {
+        int i = 0;
+        while (name[i] && i < 39) { key_status[i] = name[i]; i++; }
+        key_status[i] = '\0';
+    }
+
+    show_status(key_status);
+
+    if (scancode == SC_LCTRL)       ctrl_pressed = 1;
+    if (scancode == SC_RELEASE_CTRL) ctrl_pressed = 0;
+    if (scancode == SC_LALT)         alt_pressed = 1;
+    if (scancode == SC_RELEASE_ALT)  alt_pressed = 0;
+
+    if (scancode == SC_KP_DOT && ctrl_pressed && alt_pressed)
+        reboot();
+
+    if (shell_is_open()) {
+        if (scancode == SC_ESC)         shell_close();
+        else if (scancode == SC_L && ctrl_pressed) shell_clear();
+        else                            shell_input(scancode);
+        outb(0x20, 0x20);
+        return;
+    }
+
+    if (ext_key && !(scancode & SC_RELEASE_MASK)) {
+        int old_pos = cursor_y * VGA_WIDTH + cursor_x;
+        volatile unsigned short *vga = (volatile unsigned short *)VGA_BUFFER;
+        vga[old_pos] = cursor_backup;
+
+        switch (scancode) {
+            case SC_EXT_UP:    cursor_y--; break;
+            case SC_EXT_DOWN:  cursor_y++; break;
+            case SC_EXT_LEFT:  cursor_x--; break;
+            case SC_EXT_RIGHT: cursor_x++; break;
+        }
+        if (cursor_x < 1)  cursor_x = 1;
+        if (cursor_x > 78) cursor_x = 78;
+        if (cursor_y < 2)  cursor_y = 2;
+        if (cursor_y > 22) cursor_y = 22;
+
+        int new_pos = cursor_y * VGA_WIDTH + cursor_x;
+        cursor_backup = vga[new_pos];
+        unsigned short ch = vga[new_pos] & 0x00FF;
+        vga[new_pos] = (COLOR_BLACK_ON_WHITE << 8) | ch;
+    }
+    ext_key = 0;
+
+    if (scancode == SC_S && ctrl_pressed)
+        shell_show();
+
+    outb(0x20, 0x20);
+}
+
+void keyboard_init(void)
+{
+    outb(0x20, 0x11);
+    outb(0xA0, 0x11);
+    outb(0x21, 0x20);
+    outb(0xA1, 0x28);
+    outb(0x21, 0x04);
+    outb(0xA1, 0x02);
+    outb(0x21, 0x01);
+    outb(0xA1, 0x01);
+    outb(0x21, 0xFD);
+    outb(0xA1, 0xFF);
+
+    for (int i = 0; i < 10; i++)
+        if (inb(0x64) & 0x01) inb(0x60);
+
+    __asm__ volatile("sti");
+}
+
+============================================================
+[keyboard.h]
+============================================================
+
+#ifndef KEYBOARD_H
+#define KEYBOARD_H
+
+void keyboard_init(void);
+void keyboard_callback(void);
+void keyboard_handler(void);
+
+#endif
+
+============================================================
+[shell.c]
+============================================================
+
+#include "shell.h"
+#include "version.h"
+#include "disk.h"
+#include "fat.h"
+#include "syscall.h"
+#include "port.h"
+#include "vga.h"
+#include "scancode.h"
+
+#define SHELL_BOX_LEFT   1
+#define SHELL_BOX_RIGHT  (VGA_WIDTH - 1)
+#define SHELL_BOX_TOP    2
+#define SHELL_BOX_BOTTOM 23
+#define SHELL_INNER_W    (VGA_WIDTH - 2)
+
+extern unsigned int allocated_pages;
+extern unsigned int total_pages;
+extern volatile unsigned int timer_ticks;
+
+unsigned int alloc_page(void);
+void free_page(unsigned int addr);
+unsigned int alloc_pages(unsigned int count);
+
+static int shell_open = 0;
+static unsigned short screen_backup[VGA_WIDTH * 24];
+
+static int input_pos = 0;
+static int cmd_row = SHELL_BOX_TOP;
+static int shift_pressed = 0;
+static int caps_lock = 0;
+static char input_buf[80];
+
+static char history[5][80];
+static int history_count = 0;
+static int history_pos = -1;
+
+static void draw_shell_box(void)
+{
+    vga_put_char(0, 1, BOX_TL, COLOR_WHITE_ON_BLACK);
+    for (int i = 1; i < 79; i++) vga_put_char(i, 1, BOX_HZ, COLOR_WHITE_ON_BLACK);
+    vga_put_char(79, 1, BOX_TR, COLOR_WHITE_ON_BLACK);
+    for (int y = 2; y < 23; y++) {
+        vga_put_char(0, y, BOX_VT, COLOR_WHITE_ON_BLACK);
+        vga_put_char(79, y, BOX_VT, COLOR_WHITE_ON_BLACK);
+    }
+    vga_put_char(0, 23, BOX_BL, COLOR_WHITE_ON_BLACK);
+    for (int i = 1; i < 79; i++) vga_put_char(i, 23, BOX_HZ, COLOR_WHITE_ON_BLACK);
+    vga_put_char(79, 23, BOX_BR, COLOR_WHITE_ON_BLACK);
+}
+
+static void scroll_up(void)
+{
+    volatile unsigned short *vga = (volatile unsigned short *)VGA_BUFFER;
+    for (int y = SHELL_BOX_TOP; y < SHELL_BOX_BOTTOM - 1; y++)
+        for (int x = SHELL_BOX_LEFT; x < SHELL_BOX_RIGHT; x++)
+            vga[y * VGA_WIDTH + x] = vga[(y + 1) * VGA_WIDTH + x];
+    for (int x = SHELL_BOX_LEFT; x < SHELL_BOX_RIGHT; x++)
+        vga_put_char(x, SHELL_BOX_BOTTOM - 1, ' ', COLOR_WHITE_ON_BLACK);
+}
+
+static int str_len(const char* s)
+{
+    int n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+static int str_cmp(const char* a, const char* b)
+{
+    while (*a && *b && *a == *b) { a++; b++; }
+    return *a - *b;
+}
+
+static void shell_print_color(const char* str, unsigned char attr)
+{
+    if (cmd_row >= SHELL_BOX_BOTTOM) {
+        cmd_row = SHELL_BOX_BOTTOM - 1;
+    }
+    if (cmd_row >= SHELL_BOX_BOTTOM - 1) {
+        scroll_up();
+        cmd_row = SHELL_BOX_BOTTOM - 2;
+    }
+    int x = SHELL_BOX_LEFT;
+    while (*str && x < SHELL_BOX_RIGHT)
+        vga_put_char(x++, cmd_row, *str++, attr);
+    cmd_row++;
+    if (cmd_row > SHELL_BOX_BOTTOM) {
+        cmd_row = SHELL_BOX_BOTTOM;
+    }
+}
+
+static void shell_print(const char* str) { shell_print_color(str, COLOR_WHITE_ON_BLACK); }
+static void shell_ok(const char* str)    { shell_print_color(str, COLOR_GREEN_ON_BLACK); }
+static void shell_err(const char* str)   { shell_print_color(str, COLOR_RED_ON_BLACK); }
+
+static void show_prompt(void)
+{
+    if (cmd_row >= SHELL_BOX_BOTTOM - 1) {
+        scroll_up();
+        cmd_row = SHELL_BOX_BOTTOM - 2;
+    }
+    vga_put_char(1, cmd_row, '>', COLOR_WHITE_ON_BLACK);
+    vga_put_char(2, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+    input_pos = 3;
+    vga_put_char(input_pos, cmd_row, '_', COLOR_WHITE_ON_BLACK);
+}
+
+static void execute_command(const char* cmd)
+{
+    if (str_len(cmd) == 0) return;
+
+    if (str_cmp(cmd, "help") == 0 || str_cmp(cmd, "HELP") == 0) {
+        shell_print("[!]" KERNEL_NAME " Shell Commands:");
+        shell_print("  ABT      -    About micro kernel.");
+        shell_print("  CAT      -    Display file contents.");
+        shell_print("  CLS      -    Clear screen.");
+        shell_print("  CPU      -    Show CPU information.");
+        shell_print("  CRASH    -    Crash this kernel.");
+        shell_print("  DATE     -    Show build date.");
+        shell_print("  DIR      -    List files on disk.");
+        shell_print("  ECHO     -    Echo text.");
+        shell_print("  HELP     -    Show this help.");
+        shell_print("  MEM      -    Show memory info.");
+        shell_print("  RBT      -    Reboot system.");
+        shell_print("  RUN      -    Run program (RUN filename).");
+        shell_print("  SETUP    -    Install to hard disk.");
+        shell_print("  SYSCALL  -    Test system call.");
+        shell_print("  UPTIME   -    Show running time.");
+        shell_print("  VER      -    Show version.");
+    }
+    else if (str_cmp(cmd, "cls") == 0 || str_cmp(cmd, "CLS") == 0) {
+        shell_clear();
+    }
+    else if (str_cmp(cmd, "abt") == 0 || str_cmp(cmd, "ABT") == 0) {
+        shell_ok("[!] " KERNEL_NAME " - A Micro kernel based on x86 structure.");
+        shell_ok("[!] " KERNEL_COPYRIGHT);
+        shell_ok("[!] Built on x86 Bare-metal Protected Mode");
+    }
+    else if (str_cmp(cmd, "cpu") == 0 || str_cmp(cmd, "CPU") == 0) {
+        char *cpu_name = (char *)0x7F10;
+        while (*cpu_name == ' ') cpu_name++;
+        if (cpu_name[0] == '\0') cpu_name = (char *)0x7F00;
+        char buf[60];
+        int p = 0;
+        buf[p++] = '['; buf[p++] = '!'; buf[p++] = ']'; buf[p++] = ' ';
+        for (int i = 0; cpu_name[i] && p < 55; i++) buf[p++] = cpu_name[i];
+        buf[p] = '\0';
+        shell_print(buf);
+    }
+    else if (str_cmp(cmd, "mem") == 0 || str_cmp(cmd, "MEM") == 0) {
+        unsigned int total_mb = total_pages * 4096 / 1048576;
+        unsigned int used_kb = (allocated_pages * 4096) / 1024;
+        unsigned int free_kb = (total_pages * 4096) / 1024 - used_kb;
+        char buf[80];
+        int p = 0;
+        buf[p++] = '['; buf[p++] = '!'; buf[p++] = ']'; buf[p++] = ' ';
+        char* s = "Total: "; while (*s) buf[p++] = *s++;
+        char num[10];
+        int np = 0;
+        unsigned int n = total_mb;
+        if (n == 0) num[np++] = '0';
+        while (n > 0) { num[np++] = '0' + n % 10; n /= 10; }
+        while (np > 0) buf[p++] = num[--np];
+        buf[p++] = 'M'; buf[p++] = 'B'; buf[p++] = ' '; buf[p++] = '|'; buf[p++] = ' ';
+        s = "Used: "; while (*s) buf[p++] = *s++;
+        np = 0; n = used_kb;
+        if (n == 0) num[np++] = '0';
+        while (n > 0) { num[np++] = '0' + n % 10; n /= 10; }
+        while (np > 0) buf[p++] = num[--np];
+        buf[p++] = 'K'; buf[p++] = 'B'; buf[p++] = ' '; buf[p++] = '|'; buf[p++] = ' ';
+        s = "Free: "; while (*s) buf[p++] = *s++;
+        np = 0; n = free_kb;
+        if (n == 0) num[np++] = '0';
+        while (n > 0) { num[np++] = '0' + n % 10; n /= 10; }
+        while (np > 0) buf[p++] = num[--np];
+        buf[p++] = 'K'; buf[p++] = 'B';
+        buf[p] = '\0';
+        shell_print(buf);
+    }
+    else if (str_cmp(cmd, "ver") == 0 || str_cmp(cmd, "VER") == 0) {
+        shell_print("[!] Ver. " KERNEL_VERSION);
+    }
+    else if (str_cmp(cmd, "date") == 0 || str_cmp(cmd, "DATE") == 0) {
+        shell_print("[!] Built: " __DATE__ " " __TIME__);
+    }
+    else if (str_cmp(cmd, "syscall") == 0 || str_cmp(cmd, "SYSCALL") == 0) {
+        shell_clear();
+        __asm__ volatile("int $0x80" : : "a"(1), "b"("Hello from syscall!"));
+        cmd_row = SHELL_BOX_TOP;
+        show_prompt();
+    }
+    else if (str_cmp(cmd, "rbt") == 0 || str_cmp(cmd, "RBT") == 0) {
+        while (inb(0x64) & 0x02);
+        outb(0x64, 0xFE);
+    }
+    else if (str_cmp(cmd, "uptime") == 0 || str_cmp(cmd, "UPTIME") == 0) {
+        unsigned int seconds = timer_ticks / 100;
+        char buf[30];
+        int p = 0;
+        buf[p++] = '['; buf[p++] = '!'; buf[p++] = ']'; buf[p++] = ' ';
+        char* s = "Uptime: "; while (*s) buf[p++] = *s++;
+        char num[10];
+        int np = 0;
+        unsigned int n = seconds;
+        if (n == 0) num[np++] = '0';
+        while (n > 0) { num[np++] = '0' + n % 10; n /= 10; }
+        for (int i = np - 1; i >= 0; i--) buf[p++] = num[i];
+        buf[p++] = 's';
+        buf[p] = '\0';
+        shell_print(buf);
+    }
+    else if (str_cmp(cmd, "crash") == 0 || str_cmp(cmd, "CRASH") == 0) {
+        volatile int a = 1, b = 0;
+        a = a / b;
+    }
+    else if (str_cmp(cmd, "setup") == 0 || str_cmp(cmd, "SETUP") == 0) {
+        unsigned char* boot_drive = (unsigned char*)0x7F60;
+        if (*boot_drive == 0x80) {
+            shell_err("[X] Already running from hard disk!");
+            return;
+        }
+        if (!disk_detect()) {
+            shell_err("[X] No hard disk detected!");
+            return;
+        }
+        shell_print("[!] Installing...");
+        unsigned char buf[512];
+        unsigned char* boot_sector = (unsigned char*)0x7C00;
+        for (int i = 0; i < 512; i++) buf[i] = boot_sector[i];
+        if (disk_write(0, buf) != 0) {
+            shell_err("[X] Write boot sector failed!");
+            return;
+        }
+        unsigned char* kernel = (unsigned char*)0x1000;
+        for (int sec = 0; sec < 50; sec++)
+            if (disk_write(1 + sec, kernel + sec * 512) != 0) {
+                shell_err("[X] Write kernel failed!");
+                return;
+            }
+        shell_ok("[!] Installation complete!");
+    }
+    else if (str_cmp(cmd, "dir") == 0 || str_cmp(cmd, "DIR") == 0) {
+        unsigned int root_start = 1 + 2 * 16;  // reserved + num_fats * sectors_per_fat
+        unsigned char root_buf[512];
+
+        shell_print("[!] Disk contents:");
+        shell_print("  Name         Type   Size");
+        shell_print("  ------------ ------ ------------");
+
+        int file_count = 0;
+        for (unsigned int i = 0; i < 4; i++) {
+            if (disk_read(root_start + i, root_buf) != 0) break;
+            for (int j = 0; j < 16; j++) {
+                unsigned char* entry = &root_buf[j * 32];
+                if (entry[0] == 0x00) goto dir_done;
+                if (entry[0] == 0xE5) continue;
+                if (entry[11] == 0x0F) continue;
+                if (entry[11] & 0x08) continue;
+
+                char name[13];
+                int p = 0;
+                for (int k = 0; k < 8 && entry[k] != ' ' && entry[k] != 0; k++)
+                    name[p++] = entry[k];
+                if (entry[8] != ' ' && entry[8] != 0) {
+                    name[p++] = '.';
+                    for (int k = 8; k < 11 && entry[k] != ' ' && entry[k] != 0; k++)
+                        name[p++] = entry[k];
+                }
+                name[p] = '\0';
+
+                char line[80];
+                int lp = 0;
+                for (int k = 0; k < 13; k++)
+                    line[lp++] = (k < p) ? name[k] : ' ';
+                line[lp++] = ' ';
+                if (entry[11] & 0x10) {
+                    line[lp++]='<'; line[lp++]='D'; line[lp++]='I'; line[lp++]='R'; line[lp++]='>'; line[lp++]=' ';
+                } else {
+                    for (int k = 0; k < 6; k++) line[lp++] = ' ';
+                }
+                unsigned int size = *(unsigned int*)&entry[28];
+                char num[10];
+                int np = 0;
+                if (size == 0) num[np++] = '0';
+                while (size > 0) { num[np++] = '0' + (size % 10); size /= 10; }
+                while (np > 0) line[lp++] = num[--np];
+                line[lp++] = ' '; line[lp++] = 'b'; line[lp++] = 'y'; line[lp++] = 't'; line[lp++] = 'e'; line[lp++] = 's';
+                line[lp] = '\0';
+                shell_print(line);
+                file_count++;
+            }
+        }
+dir_done:
+        char buf[30];
+        int bp = 0;
+        buf[bp++] = '['; buf[bp++] = '!'; buf[bp++] = ']'; buf[bp++] = ' ';
+        if (file_count >= 10) buf[bp++] = '0' + file_count / 10;
+        buf[bp++] = '0' + file_count % 10;
+        buf[bp++] = ' '; buf[bp++] = 'f'; buf[bp++] = 'i'; buf[bp++] = 'l'; buf[bp++] = 'e';
+        if (file_count != 1) buf[bp++] = 's';
+        buf[bp] = '\0';
+        shell_print(buf);
+    }
+    else if (str_cmp(cmd, "run") == 0 || str_cmp(cmd, "RUN") == 0) {
+        shell_err("[X] Usage: RUN <filename>");
+    }
+    else if (str_len(cmd) >= 4 &&
+             (cmd[0] == 'R' || cmd[0] == 'r') && (cmd[1] == 'U' || cmd[1] == 'u') &&
+             (cmd[2] == 'N' || cmd[2] == 'n') && cmd[3] == ' ') {
+        const char* fn = cmd + 4;
+        while (*fn == ' ') fn++;
+        if (!*fn) {
+            shell_err("[X] Usage: RUN <filename>");
+            return;
+        }
+
+        // 直接读根目录找文件
+        unsigned int root_start = 1 + 2 * 16;
+        unsigned char root_buf[512];
+        unsigned int file_cluster = 0;
+        unsigned int file_size = 0;
+        int found = 0;
+
+        char search_name[12];
+        int sp = 0;
+        for (int i = 0; fn[i] && sp < 11; i++) {
+            if (fn[i] == '.') {
+                while (sp < 8) search_name[sp++] = ' ';
+                continue;
+            }
+            if (fn[i] >= 'a' && fn[i] <= 'z')
+                search_name[sp++] = fn[i] - 'a' + 'A';
+            else
+                search_name[sp++] = fn[i];
+        }
+        while (sp < 11) search_name[sp++] = ' ';
+
+        for (unsigned int i = 0; i < 4; i++) {
+            if (disk_read(root_start + i, root_buf) != 0) break;
+            for (int j = 0; j < 16; j++) {
+                unsigned char* entry = &root_buf[j * 32];
+                if (entry[0] == 0x00) goto search_done;
+                if (entry[0] == 0xE5) continue;
+                if (entry[11] == 0x0F) continue;
+                if (entry[11] & 0x08) continue;
+
+                int match = 1;
+                for (int k = 0; k < 11; k++) {
+                    if (entry[k] != search_name[k]) {
+                        match = 0;
+                        break;
+                    }
+                }
+                if (match) {
+                    file_cluster = *(unsigned short*)&entry[26];
+                    file_size = *(unsigned int*)&entry[28];
+                    found = 1;
+                    goto search_done;
+                }
+            }
+        }
+search_done:
+        if (!found) {
+            shell_err("[X] File not found!");
+            return;
+        }
+
+        unsigned int needed_pages = (file_size + 4095) / 4096;
+        if (needed_pages < 1) needed_pages = 1;
+        unsigned int load_addr = alloc_pages(needed_pages);
+        if (!load_addr) {
+            shell_err("[X] Out of memory!");
+            return;
+        }
+
+        // 读文件数据
+        unsigned char* load_ptr = (unsigned char*)load_addr;
+        unsigned int cluster = file_cluster;
+        unsigned int bytes_read = 0;
+
+        while (bytes_read < file_size) {
+            unsigned int sector = 33 + (cluster - 2) * 8;  // first_data_sector
+            unsigned char sector_buf[512];
+            for (int s = 0; s < 8 && bytes_read < file_size; s++) {
+                if (disk_read(sector + s, sector_buf) != 0) goto read_done;
+                unsigned int to_copy = 512;
+                if (bytes_read + to_copy > file_size) to_copy = file_size - bytes_read;
+                for (unsigned int k = 0; k < to_copy; k++)
+                    load_ptr[bytes_read + k] = sector_buf[k];
+                bytes_read += to_copy;
+            }
+            // 读 FAT 找下一个簇
+            unsigned int fat_sector = 1 + cluster / 256;
+            unsigned char fat_buf[512];
+            disk_read(fat_sector, fat_buf);
+            unsigned short* fat16 = (unsigned short*)fat_buf;
+            unsigned short next = fat16[cluster];
+            if (next >= 0xFFF8) break;
+            cluster = next;
+        }
+read_done:
+        char buf[80];
+        int p = 0;
+        buf[p++] = '['; buf[p++] = '!'; buf[p++] = ']'; buf[p++] = ' ';
+        char* s = "Running "; while (*s) buf[p++] = *s++;
+        while (*fn && p < 60) buf[p++] = *fn++;
+        buf[p++] = ' '; buf[p++] = '@'; buf[p++] = ' '; buf[p++] = '0'; buf[p++] = 'x';
+        char hex[] = "0123456789ABCDEF";
+        for (int i = 28; i >= 0; i -= 4) buf[p++] = hex[(load_addr >> i) & 0xF];
+        buf[p] = '\0';
+        shell_ok(buf);
+
+        void (*user_func)() = (void (*)())load_addr;
+        user_func();
+        shell_print("[!] Program returned.");
+        for (unsigned int i = 0; i < needed_pages; i++) free_page(load_addr + i * 4096);
+    }
+    else if (str_len(cmd) >= 4 &&
+             (cmd[0] == 'C' || cmd[0] == 'c') && (cmd[1] == 'A' || cmd[1] == 'a') &&
+             (cmd[2] == 'T' || cmd[2] == 't') && cmd[3] == ' ') {
+        shell_err("[X] CAT command temporarily disabled.");
+    }
+    else if (str_len(cmd) >= 5 &&
+             (cmd[0] == 'E' || cmd[0] == 'e') && (cmd[1] == 'C' || cmd[1] == 'c') &&
+             (cmd[2] == 'H' || cmd[2] == 'h') && (cmd[3] == 'O' || cmd[3] == 'o') && cmd[4] == ' ') {
+        shell_print(cmd + 5);
+    }
+    else {
+        shell_err("[X] Unknown command. Type HELP for list.");
+    }
+}
+
+static char scancode_to_ascii(unsigned char scancode)
+{
+    int upper = shift_pressed ^ caps_lock;
+    switch (scancode) {
+        case SC_1: return upper ? '!' : '1';
+        case SC_2: return upper ? '@' : '2';
+        case SC_3: return upper ? '#' : '3';
+        case SC_4: return upper ? '$' : '4';
+        case SC_5: return upper ? '%' : '5';
+        case SC_6: return upper ? '^' : '6';
+        case SC_7: return upper ? '&' : '7';
+        case SC_8: return upper ? '*' : '8';
+        case SC_9: return upper ? '(' : '9';
+        case SC_0: return upper ? ')' : '0';
+        case SC_MINUS: return upper ? '_' : '-';
+        case SC_EQUAL: return upper ? '+' : '=';
+        case SC_Q: return upper ? 'Q' : 'q';
+        case SC_W: return upper ? 'W' : 'w';
+        case SC_E: return upper ? 'E' : 'e';
+        case SC_R: return upper ? 'R' : 'r';
+        case SC_T: return upper ? 'T' : 't';
+        case SC_Y: return upper ? 'Y' : 'y';
+        case SC_U: return upper ? 'U' : 'u';
+        case SC_I: return upper ? 'I' : 'i';
+        case SC_O: return upper ? 'O' : 'o';
+        case SC_P: return upper ? 'P' : 'p';
+        case SC_A: return upper ? 'A' : 'a';
+        case SC_S: return upper ? 'S' : 's';
+        case SC_D: return upper ? 'D' : 'd';
+        case SC_F: return upper ? 'F' : 'f';
+        case SC_G: return upper ? 'G' : 'g';
+        case SC_H: return upper ? 'H' : 'h';
+        case SC_J: return upper ? 'J' : 'j';
+        case SC_K: return upper ? 'K' : 'k';
+        case SC_L: return upper ? 'L' : 'l';
+        case SC_Z: return upper ? 'Z' : 'z';
+        case SC_X: return upper ? 'X' : 'x';
+        case SC_C: return upper ? 'C' : 'c';
+        case SC_V: return upper ? 'V' : 'v';
+        case SC_B: return upper ? 'B' : 'b';
+        case SC_N: return upper ? 'N' : 'n';
+        case SC_M: return upper ? 'M' : 'm';
+        case SC_LBRACKET: return upper ? '{' : '[';
+        case SC_RBRACKET: return upper ? '}' : ']';
+        case SC_SEMICOLON: return upper ? ':' : ';';
+        case SC_QUOTE: return upper ? '"' : '\'';
+        case SC_BACKTICK: return upper ? '~' : '`';
+        case SC_BACKSLASH: return upper ? '|' : '\\';
+        case SC_COMMA: return upper ? '<' : ',';
+        case SC_DOT: return upper ? '>' : '.';
+        case SC_SLASH: return upper ? '?' : '/';
+        case SC_SPACE: return ' ';
+        default: return 0;
+    }
+}
+
+void shell_input(unsigned char scancode)
+{
+    if (!shell_open) return;
+
+    if (scancode == SC_LSHIFT || scancode == SC_RSHIFT) {
+        shift_pressed = 1;
+        return;
+    }
+    if (scancode == SC_RELEASE_LSHIFT || scancode == SC_RELEASE_RSHIFT) {
+        shift_pressed = 0;
+        return;
+    }
+    if (scancode == SC_CAPSLOCK) {
+        caps_lock = !caps_lock;
+        return;
+    }
+    if (scancode & SC_RELEASE_MASK) return;
+
+    if (scancode == SC_KP_8) {
+        if (history_count > 0 && history_pos < 4) {
+            if (history_pos == -1) history_pos = (history_count - 1) % 5;
+            else history_pos = (history_pos - 1 + 5) % 5;
+            for (int i = 3; i < SHELL_INNER_W - 1; i++)
+                vga_put_char(i, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+            int h = history_pos;
+            for (int i = 0; history[h][i] && i < 75; i++)
+                vga_put_char(3 + i, cmd_row, history[h][i], COLOR_WHITE_ON_BLACK);
+            input_pos = 3;
+            for (int i = 0; history[h][i] && i < 75; i++) {
+                input_buf[i] = history[h][i];
+                input_pos++;
+            }
+            input_buf[input_pos - 3] = '\0';
+            vga_put_char(input_pos, cmd_row, '_', COLOR_WHITE_ON_BLACK);
+        }
+        return;
+    }
+
+    if (scancode == SC_KP_2) {
+        if (history_pos != -1) {
+            history_pos = (history_pos + 1) % 5;
+            if (history_pos >= history_count || history_count == 0) {
+                history_pos = -1;
+                for (int i = 3; i < SHELL_INNER_W - 1; i++)
+                    vga_put_char(i, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+                input_buf[0] = '\0';
+                input_pos = 3;
+                vga_put_char(input_pos, cmd_row, '_', COLOR_WHITE_ON_BLACK);
+            } else {
+                for (int i = 3; i < SHELL_INNER_W - 1; i++)
+                    vga_put_char(i, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+                int h = history_pos;
+                for (int i = 0; history[h][i] && i < 75; i++)
+                    vga_put_char(3 + i, cmd_row, history[h][i], COLOR_WHITE_ON_BLACK);
+                input_pos = 3;
+                for (int i = 0; history[h][i] && i < 75; i++) {
+                    input_buf[i] = history[h][i];
+                    input_pos++;
+                }
+                input_buf[input_pos - 3] = '\0';
+                vga_put_char(input_pos, cmd_row, '_', COLOR_WHITE_ON_BLACK);
+            }
+        }
+        return;
+    }
+
+    if (scancode == SC_TAB) {
+        if (input_pos <= 3) return;
+        input_buf[input_pos - 3] = '\0';
+        const char* cmds[] = {
+            "abt", "cat", "cls", "cpu", "crash", "date", "dir", "echo",
+            "help", "mem", "rbt", "run", "setup", "syscall", "uptime", "ver"
+        };
+        int match_count = 0, match_idx = 0, cmd_count = 16;
+        for (int i = 0; i < cmd_count; i++) {
+            int j;
+            for (j = 0; input_buf[j] && cmds[i][j]; j++)
+                if (input_buf[j] != cmds[i][j] && input_buf[j] != cmds[i][j] - 'a' + 'A') break;
+            if (input_buf[j] == '\0') { match_count++; match_idx = i; }
+        }
+        if (match_count == 1) {
+            for (int i = 3; i < SHELL_INNER_W - 1; i++)
+                vga_put_char(i, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+            int i;
+            for (i = 0; cmds[match_idx][i]; i++) {
+                vga_put_char(3 + i, cmd_row, cmds[match_idx][i], COLOR_WHITE_ON_BLACK);
+                input_buf[i] = cmds[match_idx][i];
+            }
+            input_buf[i] = '\0';
+            input_pos = 3 + i;
+            vga_put_char(input_pos, cmd_row, '_', COLOR_WHITE_ON_BLACK);
+        } else if (match_count > 1) {
+            cmd_row++;
+            if (cmd_row >= SHELL_BOX_BOTTOM - 1) {
+                scroll_up();
+                cmd_row = SHELL_BOX_BOTTOM - 2;
+            }
+            for (int i = 0; i < cmd_count; i++) {
+                int j;
+                for (j = 0; input_buf[j] && cmds[i][j]; j++)
+                    if (input_buf[j] != cmds[i][j] && input_buf[j] != cmds[i][j] - 'a' + 'A') break;
+                if (input_buf[j] == '\0') {
+                    for (int k = 0; cmds[i][k]; k++)
+                        vga_put_char(1 + k, cmd_row, cmds[i][k], COLOR_WHITE_ON_BLACK);
+                    cmd_row++;
+                    if (cmd_row >= SHELL_BOX_BOTTOM - 1) {
+                        scroll_up();
+                        cmd_row = SHELL_BOX_BOTTOM - 2;
+                    }
+                }
+            }
+            show_prompt();
+        }
+        return;
+    }
+
+    if (scancode == SC_BACKSPACE) {
+        if (input_pos > 3) {
+            vga_put_char(input_pos, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+            input_pos--;
+            vga_put_char(input_pos, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+            vga_put_char(input_pos, cmd_row, '_', COLOR_WHITE_ON_BLACK);
+            input_buf[input_pos - 3] = '\0';
+        }
+        return;
+    }
+
+    if (scancode == SC_ENTER) {
+        vga_put_char(input_pos, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+        input_buf[input_pos - 3] = '\0';
+        if (input_buf[0] != '\0') {
+            int h = history_count % 5;
+            for (int i = 0; i < 80; i++) history[h][i] = input_buf[i];
+            history_count++; history_pos = -1;
+        }
+
+        cmd_row++;
+
+        execute_command(input_buf);
+
+        input_buf[0] = '\0'; input_pos = 3;
+        show_prompt();
+        return;
+    }
+
+    char c = scancode_to_ascii(scancode);
+    if (c && input_pos < SHELL_INNER_W - 2) {
+        vga_put_char(input_pos, cmd_row, c, COLOR_WHITE_ON_BLACK);
+        input_buf[input_pos - 3] = c;
+        input_pos++;
+        vga_put_char(input_pos, cmd_row, '_', COLOR_WHITE_ON_BLACK);
+    }
+}
+
+void shell_init(void)
+{
+    shell_open = 0;
+    input_pos = 3;
+    cmd_row = SHELL_BOX_TOP;
+    shift_pressed = 0;
+    caps_lock = 0;
+    input_buf[0] = '\0';
+    history_count = 0;
+    history_pos = -1;
+}
+
+void shell_show(void)
+{
+    if (shell_open) return;
+    shell_open = 1;
+    volatile unsigned short *vga = (volatile unsigned short *)VGA_BUFFER;
+    for (int i = VGA_WIDTH; i < VGA_WIDTH * 24; i++)
+        screen_backup[i - VGA_WIDTH] = vga[i];
+    for (int i = 0; i < VGA_WIDTH; i++)
+        vga_put_char(i, 0, ' ', COLOR_BLACK_ON_WHITE);
+    char *title = " T.B.M.K. Micro Kernel - Shell ";
+    int title_len = 0;
+    while (title[title_len]) title_len++;
+    int title_start = (VGA_WIDTH - title_len) / 2;
+    for (int i = 0; i < title_len; i++)
+        vga_put_char(title_start + i, 0, title[i], COLOR_BLACK_ON_WHITE);
+    draw_shell_box();
+    for (int y = SHELL_BOX_TOP; y < SHELL_BOX_BOTTOM; y++)
+        for (int x = SHELL_BOX_LEFT; x < SHELL_BOX_RIGHT; x++)
+            vga_put_char(x, y, ' ', COLOR_WHITE_ON_BLACK);
+    cmd_row = SHELL_BOX_TOP;
+    input_pos = 3;
+    input_buf[0] = '\0';
+    show_prompt();
+}
+
+void shell_close(void)
+{
+    if (!shell_open) return;
+    vga_put_char(1, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+    vga_put_char(2, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+    vga_put_char(3, cmd_row, ' ', COLOR_WHITE_ON_BLACK);
+    shell_open = 0;
+    volatile unsigned short *vga = (volatile unsigned short *)VGA_BUFFER;
+    for (int i = VGA_WIDTH; i < VGA_WIDTH * 24; i++)
+        vga[i] = screen_backup[i - VGA_WIDTH];
+    for (int i = 0; i < VGA_WIDTH; i++)
+        vga_put_char(i, 0, ' ', COLOR_BLACK_ON_WHITE);
+    char *title = " T.B.M.K. Micro Kernel - Main Page ";
+    int title_len = 0;
+    while (title[title_len]) title_len++;
+    int title_start = (VGA_WIDTH - title_len) / 2;
+    for (int i = 0; i < title_len; i++)
+        vga_put_char(title_start + i, 0, title[i], COLOR_BLACK_ON_WHITE);
+}
+
+void shell_clear(void)
+{
+    for (int y = SHELL_BOX_TOP; y < SHELL_BOX_BOTTOM; y++)
+        for (int x = SHELL_BOX_LEFT; x < SHELL_BOX_RIGHT; x++)
+            vga_put_char(x, y, ' ', COLOR_WHITE_ON_BLACK);
+    cmd_row = SHELL_BOX_TOP;
+    input_pos = 3;
+    input_buf[0] = '\0';
+    show_prompt();
+}
+
+int shell_is_open(void)
+{
+    return shell_open;
+}
+
+============================================================
+[shell.h]
+============================================================
+
+#ifndef SHELL_H
+#define SHELL_H
+
+void shell_init(void);
+void shell_show(void);
+void shell_close(void);
+int shell_is_open(void);
+void shell_input(unsigned char scancode);
+void shell_clear(void);
+
+#endif
+
+============================================================
+[except.c]
+============================================================
+
+#include "except.h"
+#include "port.h"
+#include "vga.h"
+
+void show_exception(int num)
+{
+    outb(0x43, 0x30);
+    outb(0x40, 0);
+    outb(0x40, 0);
+
+    const char* names[] = {
+        "Division by Zero", "", "", "", "", "",
+        "Invalid Opcode", "", "", "", "", "", "",
+        "General Protection Fault", "Page Fault"
+    };
+    const char* name = (num <= 14) ? names[num] : "Unknown";
+
+    vga_fill(' ', COLOR_WHITE_ON_RED);
+
+    vga_print(2, 3,  "==============================================", COLOR_WHITE_ON_RED);
+    vga_print(2, 4,  "           SYSTEM EXCEPTION", COLOR_WHITE_ON_RED);
+    vga_print(2, 5,  "==============================================", COLOR_WHITE_ON_RED);
+    vga_print(2, 7,  "Exception: ", COLOR_WHITE_ON_RED);
+    vga_print(14, 7, name, COLOR_WHITE_ON_RED);
+
+    char num_str[5];
+    num_str[0] = '0'; num_str[1] = 'x';
+    num_str[2] = "0123456789ABCDEF"[(num >> 4) & 0x0F];
+    num_str[3] = "0123456789ABCDEF"[num & 0x0F];
+    num_str[4] = '\0';
+    vga_print(2, 8,  "Number: ", COLOR_WHITE_ON_RED);
+    vga_print(11, 8, num_str, COLOR_WHITE_ON_RED);
+
+    vga_print(2, 10, "The system has encountered a fatal error.", COLOR_WHITE_ON_RED);
+    vga_print(2, 12, "Please force reboot your computer.", COLOR_WHITE_ON_RED);
+
+    while (1) __asm__ volatile("hlt");
+}
+
+__attribute__((naked)) void except_handler_0(void)
+{
+    __asm__ volatile("pushal\npush $0\ncall _show_exception\nadd $4, %esp\npopal\niret\n");
+}
+__attribute__((naked)) void except_handler_6(void)
+{
+    __asm__ volatile("pushal\npush $6\ncall _show_exception\nadd $4, %esp\npopal\niret\n");
+}
+__attribute__((naked)) void except_handler_13(void)
+{
+    __asm__ volatile("pushal\npush $13\ncall _show_exception\nadd $4, %esp\npopal\niret\n");
+}
+__attribute__((naked)) void except_handler_14(void)
+{
+    __asm__ volatile("pushal\npush $14\ncall _show_exception\nadd $4, %esp\npopal\niret\n");
+}
+
+============================================================
+[except.h]
+============================================================
+
+#ifndef EXCEPT_H
+#define EXCEPT_H
+
+void except_handler_0(void);
+void except_handler_6(void);
+void except_handler_13(void);
+void except_handler_14(void);
+
+#endif
+
+============================================================
+[syscall.c]
+============================================================
+
+#include "syscall.h"
+#include "port.h"
+#include "vga.h"
+
+void sys_print(const char* str)
+{
+    int row = 6, col = 2;
+    while (*str) {
+        if (*str == '\n') { row++; col = 2; str++; continue; }
+        if (row > 20) break;
+        vga_put_char(col, row, *str, COLOR_WHITE_ON_BLUE);
+        col++; str++;
+        if (col > 70) { col = 2; row++; }
+    }
+}
+
+void sys_clear(void)
+{
+    vga_fill(' ', COLOR_WHITE_ON_BLUE);
+}
+
+void sys_reboot(void)
+{
+    while (inb(0x64) & 0x02);
+    outb(0x64, 0xFE);
+}
+
+__attribute__((naked)) void sys_exec(void)
+{
+    __asm__ volatile(
+        "movl $0x90000, %%esp\n"
+        "movl $0x200000, %%eax\n"
+        "jmp *%%eax\n"
+        : : : "eax"
+    );
+}
+
+__attribute__((naked)) void sys_exit(void)
+{
+    __asm__ volatile("call _sys_reboot\n");
+}
+
+__attribute__((naked)) void syscall_handler(void)
+{
+    __asm__ volatile(
+        "pushal\n"
+        "cmpl $1, %%eax\n je 1f\n"
+        "cmpl $2, %%eax\n je 2f\n"
+        "cmpl $3, %%eax\n je 3f\n"
+        "cmpl $4, %%eax\n je 4f\n"
+        "cmpl $5, %%eax\n je 5f\n"
+        "jmp 9f\n"
+        "1:\n pushl %%ebx\n call _sys_print\n addl $4, %%esp\n jmp 9f\n"
+        "2:\n call _sys_clear\n jmp 9f\n"
+        "3:\n call _sys_reboot\n jmp 9f\n"
+        "4:\n call _sys_exec\n jmp 9f\n"
+        "5:\n call _sys_exit\n jmp 9f\n"
+        "9:\n popal\n iret\n"
+        : : : "eax", "ebx"
+    );
+}
+
+============================================================
+[syscall.h]
+============================================================
+
+#ifndef SYSCALL_H
+#define SYSCALL_H
+
+void syscall_handler(void);
+
+// 系统调用号
+#define SYS_PRINT  1
+#define SYS_CLEAR  2
+#define SYS_REBOOT 3
+#define SYS_EXEC   4
+#define SYS_EXIT   5
+
+// 用户程序入口
+void user_program_entry(void);
+
+#endif
+
+============================================================
+[disk.c]
+============================================================
+
+#include "disk.h"
+#include "port.h"
+
+#define ATA_PORT_DATA       0x1F0
+#define ATA_PORT_ERROR      0x1F1
+#define ATA_PORT_SECT_COUNT 0x1F2
+#define ATA_PORT_LBA_LO     0x1F3
+#define ATA_PORT_LBA_MID    0x1F4
+#define ATA_PORT_LBA_HI     0x1F5
+#define ATA_PORT_DRIVE      0x1F6
+#define ATA_PORT_STATUS     0x1F7
+#define ATA_PORT_CMD        0x1F7
+
+#define ATA_CMD_READ        0x20
+#define ATA_CMD_WRITE       0x30
+#define ATA_CMD_IDENTIFY    0xEC
+#define ATA_CMD_CACHE_FLUSH 0xE7
+
+#define ATA_SR_BSY  0x80  // 忙
+#define ATA_SR_DRDY 0x40  // 驱动器就绪
+#define ATA_SR_DF   0x20  // 驱动器故障
+#define ATA_SR_DRQ  0x08  // 数据请求
+#define ATA_SR_ERR  0x01  // 错误
+
+#define ATA_TIMEOUT  100000  // 超时计数
+
+// 等待 BSY 清零（返回 0=成功, -1=超时, -2=故障）
+static int ata_wait_bsy(void)
+{
+    int timeout = ATA_TIMEOUT;
+    while ((inb(ATA_PORT_STATUS) & ATA_SR_BSY) && timeout > 0)
+        timeout--;
+    if (timeout == 0) return -1;      // 超时
+    if (inb(ATA_PORT_STATUS) & ATA_SR_DF) return -2;  // 驱动器故障
+    return 0;
+}
+
+// 等待 DRQ 置位（返回 0=成功, -1=超时, -2=错误）
+static int ata_wait_drq(void)
+{
+    int timeout = ATA_TIMEOUT;
+    unsigned char status;
+    while (timeout > 0) {
+        status = inb(ATA_PORT_STATUS);
+        if (status & ATA_SR_DRQ) return 0;  // 数据就绪
+        if (status & ATA_SR_ERR) return -2; // 错误
+        timeout--;
+    }
+    return -1;  // 超时
+}
+
+int disk_detect(void)
+{
+    outb(ATA_PORT_DRIVE, 0xA0);         // 选择主盘
+    outb(ATA_PORT_CMD, ATA_CMD_IDENTIFY);
+
+    unsigned char status = inb(ATA_PORT_STATUS);
+    if (status == 0xFF || status == 0x00) return 0;  // 无设备
+
+    if (ata_wait_bsy() != 0) return 0;
+
+    // 读取 IDENTIFY 数据（256个字）
+    for (int i = 0; i < 256; i++) inw(ATA_PORT_DATA);
+    return 1;
+}
+
+int disk_read(unsigned int lba, unsigned char* buf)
+{
+    // 1. 等待控制器空闲
+    if (ata_wait_bsy() != 0) return -1;
+
+    // 2. 设置参数
+    outb(ATA_PORT_SECT_COUNT, 1);                      // 1 个扇区
+    outb(ATA_PORT_LBA_LO, lba & 0xFF);
+    outb(ATA_PORT_LBA_MID, (lba >> 8) & 0xFF);
+    outb(ATA_PORT_LBA_HI, (lba >> 16) & 0xFF);
+    outb(ATA_PORT_DRIVE, 0xE0 | ((lba >> 24) & 0x0F)); // LBA模式, 主盘
+
+    // 3. 发送读命令
+    outb(ATA_PORT_CMD, ATA_CMD_READ);
+
+    // 4. 等待数据就绪
+    if (ata_wait_drq() != 0) return -1;
+
+    // 5. 读取数据
+    unsigned short* buf16 = (unsigned short*)buf;
+    for (int i = 0; i < 256; i++)
+        buf16[i] = inw(ATA_PORT_DATA);
+
+    return 0;
+}
+
+int disk_write(unsigned int lba, const unsigned char* buf)
+{
+    // 1. 等待控制器空闲
+    if (ata_wait_bsy() != 0) return -1;
+
+    // 2. 设置参数
+    outb(ATA_PORT_SECT_COUNT, 1);
+    outb(ATA_PORT_LBA_LO, lba & 0xFF);
+    outb(ATA_PORT_LBA_MID, (lba >> 8) & 0xFF);
+    outb(ATA_PORT_LBA_HI, (lba >> 16) & 0xFF);
+    outb(ATA_PORT_DRIVE, 0xE0 | ((lba >> 24) & 0x0F));
+
+    // 3. 发送写命令
+    outb(ATA_PORT_CMD, ATA_CMD_WRITE);
+
+    // 4. 等待数据请求
+    if (ata_wait_drq() != 0) return -1;
+
+    // 5. 写入数据
+    unsigned short* buf16 = (unsigned short*)buf;
+    for (int i = 0; i < 256; i++)
+        outw(ATA_PORT_DATA, buf16[i]);
+
+    // 6. 刷新缓存
+    outb(ATA_PORT_CMD, ATA_CMD_CACHE_FLUSH);
+
+    // 7. 等待写入完成
+    if (ata_wait_bsy() != 0) return -1;
+
+    return 0;
+}
+
+============================================================
+[disk.h]
+============================================================
+
+#ifndef DISK_H
+#define DISK_H
+
+int disk_detect(void);
+int disk_read(unsigned int lba, unsigned char* buf);
+int disk_write(unsigned int lba, const unsigned char* buf);
+
+#endif
+
+============================================================
+[version.h]
+============================================================
+
+#ifndef VERSION_H
+#define VERSION_H
+
+#define KERNEL_NAME        " T.B.M.K."
+#define KERNEL_VERSION     "C1.2.824.727 Beta 6"
+#define KERNEL_COPYRIGHT   "(C) Tairitsu_tty 2026"
+#define KERNEL_FULL_STRING "[!]" KERNEL_NAME " " KERNEL_COPYRIGHT " [Version " KERNEL_VERSION "]"
+
+#endif
+
+============================================================
+[link.ld]
+============================================================
+
+ENTRY(_start)
+
+SECTIONS
+{
+    . = 0x1000;
+    
+    .text : {
+        *(.text)
+    }
+    
+    .rodata : {
+        *(.rodata)
+    }
+    
+    .data : {
+        *(.data)
+    }
+    
+    .bss : {
+        *(COMMON)
+        *(.bss)
+    }
+    
+    __kernel_end = .;
+
+    /DISCARD/ : {
+        *(.comment)
+        *(.note*)
+        *(.eh_frame)
+    }
+}
+
+============================================================
+[fat.c]
+============================================================
+
+#include "fat.h"
+#include "disk.h"
+
+#define SECTOR_SIZE 512
+
+fat_fs_t g_fs;
+static file_handle_t g_handle;
+
+static int str_casecmp(const char* a, const char* b, int n)
+{
+    for (int i = 0; i < n; i++) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'a' && ca <= 'z') ca -= 32;
+        if (cb >= 'a' && cb <= 'z') cb -= 32;
+        if (ca != cb) return ca - cb;
+        if (ca == 0) return 0;
+    }
+    return 0;
+}
+
+static int str_len(const char* s)
+{
+    int n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+static void str_copy(char* dst, const char* src, int max)
+{
+    int i;
+    for (i = 0; i < max - 1 && src[i]; i++) dst[i] = src[i];
+    dst[i] = '\0';
+}
+
+static int fat_read_fat(void)
+{
+    unsigned int fat_start = g_fs.reserved_sectors;
+    int sectors_to_read = g_fs.sectors_per_fat;
+    if (sectors_to_read > 128) sectors_to_read = 128;
+    if (sectors_to_read > 16) sectors_to_read = 16;
+
+    for (int i = 0; i < sectors_to_read; i++) {
+        unsigned char buf[512];
+        if (disk_read(fat_start + i, buf) != 0) return -1;
+        unsigned short* buf_ptr = (unsigned short*)buf;
+        for (int j = 0; j < 256; j++)
+            g_fs.fat_cache[i * 256 + j] = buf_ptr[j];
+    }
+    g_fs.fat_loaded = 1;
+    return 0;
+}
+
+static unsigned short fat_next_cluster(unsigned short cluster)
+{
+    if (cluster < 2 || cluster >= g_fs.total_clusters + 2) return 0xFFFF;
+    unsigned short value = g_fs.fat_cache[cluster];
+    if (value >= 0xFFF8) return 0xFFFF;
+    if (value == 0xFFF7) return 0xFFF7;
+    if (value == 0)     return 0xFFFF;
+    return value;
+}
+
+static unsigned int cluster_to_sector(unsigned short cluster)
+{
+    return g_fs.first_data_sector + (cluster - 2) * g_fs.sectors_per_cluster;
+}
+
+static void fat_name_to_str(const unsigned char* raw_name, char* out)
+{
+    int p = 0;
+    for (int i = 0; i < 8; i++) {
+        if (raw_name[i] == ' ' || raw_name[i] == 0) break;
+        out[p++] = raw_name[i];
+    }
+    if (raw_name[8] != ' ' && raw_name[8] != 0) {
+        out[p++] = '.';
+        for (int i = 8; i < 11; i++) {
+            if (raw_name[i] == ' ' || raw_name[i] == 0) break;
+            out[p++] = raw_name[i];
+        }
+    }
+    out[p] = '\0';
+}
+
+static void str_to_fat_name(const char* input, unsigned char* name, unsigned char* ext)
+{
+    for (int i = 0; i < 8; i++) name[i] = ' ';
+    for (int i = 0; i < 3; i++) ext[i] = ' ';
+    int dot_pos = -1, len = str_len(input);
+    for (int i = 0; i < len; i++) {
+        if (input[i] == '.') { dot_pos = i; break; }
+    }
+    int main_len = (dot_pos >= 0) ? dot_pos : len;
+    if (main_len > 8) main_len = 8;
+    for (int i = 0; i < main_len; i++) {
+        char c = input[i];
+        if (c >= 'a' && c <= 'z') c -= 32;
+        name[i] = c;
+    }
+    if (dot_pos >= 0) {
+        int ext_start = dot_pos + 1, ext_len = len - ext_start;
+        if (ext_len > 3) ext_len = 3;
+        for (int i = 0; i < ext_len; i++) {
+            char c = input[ext_start + i];
+            if (c >= 'a' && c <= 'z') c -= 32;
+            ext[i] = c;
+        }
+    }
+}
+
+int fat_init(void)
+{
+    unsigned char boot_sector[512];
+    if (disk_read(0, boot_sector) != 0) return -1;
+
+    bpb_t* bpb = 0;
+    unsigned int partition_start = 0;
+    bpb = (bpb_t*)&boot_sector[11];
+
+    if (boot_sector[11] == 0x00 && boot_sector[12] == 0x02) {
+        partition_start = 0;
+    } else {
+        unsigned int* part_start = (unsigned int*)&boot_sector[0x1C6];
+        partition_start = *part_start;
+        if (partition_start == 0 || partition_start > 100000) partition_start = 63;
+        if (disk_read(partition_start, boot_sector) != 0) return -1;
+        bpb = (bpb_t*)&boot_sector[11];
+        if (boot_sector[11] != 0x00 || boot_sector[12] != 0x02) {
+            partition_start = 2048;
+            if (disk_read(partition_start, boot_sector) != 0) return -1;
+            bpb = (bpb_t*)&boot_sector[11];
+        }
+    }
+
+    if (bpb->bytes_per_sector != 512) return -1;
+
+    g_fs.sectors_per_cluster = bpb->sectors_per_cluster;
+    g_fs.reserved_sectors   = bpb->reserved_sectors + partition_start;
+    g_fs.num_fats           = bpb->num_fats;
+    g_fs.root_entries       = bpb->root_entries;
+    g_fs.sectors_per_fat    = bpb->sectors_per_fat;
+    g_fs.root_dir_sectors   = (g_fs.root_entries * 32 + 511) / 512;
+
+    unsigned int total_sectors = bpb->total_sectors_16;
+    if (total_sectors == 0) total_sectors = bpb->total_sectors_32;
+
+    unsigned int data_sectors = total_sectors - g_fs.reserved_sectors
+                              - g_fs.num_fats * g_fs.sectors_per_fat
+                              - g_fs.root_dir_sectors;
+
+    g_fs.total_clusters = data_sectors / g_fs.sectors_per_cluster;
+    g_fs.first_data_sector = g_fs.reserved_sectors + g_fs.num_fats * g_fs.sectors_per_fat + g_fs.root_dir_sectors;
+
+    if (g_fs.sectors_per_cluster == 0 || g_fs.sectors_per_cluster > 128) return -1;
+    if (g_fs.sectors_per_fat == 0 || g_fs.sectors_per_fat > 256) return -1;
+    if (g_fs.root_entries == 0) return -1;
+    if (g_fs.root_dir_sectors > 64) g_fs.root_dir_sectors = 64;
+    if (g_fs.sectors_per_fat > 16) g_fs.sectors_per_fat = 16;
+
+    g_fs.fat_loaded = 0;
+    if (fat_read_fat() != 0) return -1;
+    return 0;
+}
+
+int fat_list_root(void (*callback)(const file_info_t*))
+{
+    unsigned int root_start = g_fs.reserved_sectors + g_fs.num_fats * g_fs.sectors_per_fat;
+    unsigned char buf[512];
+    file_info_t info;
+
+    for (unsigned int i = 0; i < g_fs.root_dir_sectors && i < 32; i++) {
+        if (disk_read(root_start + i, buf) != 0) return -1;
+        for (int j = 0; j < 16; j++) {
+            dir_entry_t* entry = (dir_entry_t*)&buf[j * 32];
+            if (entry->name[0] == 0x00) return 0;
+            if (entry->name[0] == 0xE5) continue;
+            if (entry->attr == 0x0F) continue;
+            if (entry->attr & 0x08) continue;
+            fat_name_to_str(entry->name, info.name);
+            info.attr = entry->attr;
+            info.size = entry->file_size;
+            info.first_cluster = entry->first_cluster;
+            if (callback) callback(&info);
+        }
+    }
+    return 0;
+}
+
+int fat_find(const char* name, file_info_t* info)
+{
+    unsigned int root_start = g_fs.reserved_sectors + g_fs.num_fats * g_fs.sectors_per_fat;
+    unsigned char buf[512];
+    unsigned char fat_name[8], fat_ext[3];
+    str_to_fat_name(name, fat_name, fat_ext);
+
+    for (unsigned int i = 0; i < g_fs.root_dir_sectors && i < 32; i++) {
+        if (disk_read(root_start + i, buf) != 0) return -1;
+        for (int j = 0; j < 16; j++) {
+            dir_entry_t* entry = (dir_entry_t*)&buf[j * 32];
+            if (entry->name[0] == 0x00) return -1;
+            if (entry->name[0] == 0xE5) continue;
+            if (entry->attr == 0x0F) continue;
+            if (entry->attr & 0x08) continue;
+            if (str_casecmp((const char*)entry->name, (const char*)fat_name, 8) == 0 &&
+                str_casecmp((const char*)&entry->name[8], (const char*)fat_ext, 3) == 0) {
+                fat_name_to_str(entry->name, info->name);
+                info->attr = entry->attr;
+                info->size = entry->file_size;
+                info->first_cluster = entry->first_cluster;
+                return 0;
+            }
+        }
+    }
+    return -1;
+}
+
+file_handle_t* fat_open(const char* name)
+{
+    file_info_t info;
+    if (fat_find(name, &info) != 0) return 0;
+    if (info.attr & 0x10) return 0;
+    str_copy(g_handle.name, info.name, 13);
+    g_handle.size = info.size;
+    g_handle.first_cluster = info.first_cluster;
+    g_handle.current_cluster = info.first_cluster;
+    g_handle.current_offset = 0;
+    g_handle.cluster_offset = 0;
+    g_handle.is_open = 1;
+    return &g_handle;
+}
+
+int fat_read(file_handle_t* handle, unsigned char* buf, unsigned int size)
+{
+    if (!handle->is_open) return -1;
+    unsigned int bytes_read = 0, remaining = size;
+    if (handle->current_offset >= handle->size) return 0;
+    if (handle->current_offset + size > handle->size) remaining = handle->size - handle->current_offset;
+
+    unsigned char sector_buf[512];
+    while (remaining > 0) {
+        if (handle->cluster_offset >= g_fs.sectors_per_cluster * 512) {
+            handle->current_cluster = fat_next_cluster(handle->current_cluster);
+            if (handle->current_cluster == 0xFFFF || handle->current_cluster == 0xFFF7) break;
+            handle->cluster_offset = 0;
+        }
+        unsigned int sector = cluster_to_sector(handle->current_cluster) + handle->cluster_offset / 512;
+        unsigned int offset_in_sector = handle->cluster_offset % 512;
+        if (disk_read(sector, sector_buf) != 0) break;
+        unsigned int to_read = 512 - offset_in_sector;
+        if (to_read > remaining) to_read = remaining;
+        for (unsigned int i = 0; i < to_read; i++) buf[bytes_read + i] = sector_buf[offset_in_sector + i];
+        bytes_read += to_read;
+        remaining -= to_read;
+        handle->current_offset += to_read;
+        handle->cluster_offset += to_read;
+    }
+    return bytes_read;
+}
+
+void fat_close(file_handle_t* handle)
+{
+    if (handle) handle->is_open = 0;
+}
+
+void fat_debug(void) { }
+
+============================================================
+[fat.h]
+============================================================
+
+#ifndef FAT_H
+#define FAT_H
+
+typedef struct {
+    unsigned short bytes_per_sector;
+    unsigned char  sectors_per_cluster;
+    unsigned short reserved_sectors;
+    unsigned char  num_fats;
+    unsigned short root_entries;
+    unsigned short total_sectors_16;
+    unsigned char  media_type;
+    unsigned short sectors_per_fat;
+    unsigned short sectors_per_track;
+    unsigned short num_heads;
+    unsigned int   hidden_sectors;
+    unsigned int   total_sectors_32;
+} __attribute__((packed)) bpb_t;
+
+typedef struct {
+    unsigned char  name[8];
+    unsigned char  ext[3];
+    unsigned char  attr;
+    unsigned char  reserved;
+    unsigned char  create_time_tenth;
+    unsigned short create_time;
+    unsigned short create_date;
+    unsigned short access_date;
+    unsigned short first_cluster_high;
+    unsigned short write_time;
+    unsigned short write_date;
+    unsigned short first_cluster;
+    unsigned int   file_size;
+} __attribute__((packed)) dir_entry_t;
+
+typedef struct {
+    unsigned char  sectors_per_cluster;
+    unsigned short reserved_sectors;
+    unsigned char  num_fats;
+    unsigned short root_entries;
+    unsigned short sectors_per_fat;
+    unsigned int   root_dir_sectors;
+    unsigned int   first_data_sector;
+    unsigned int   total_clusters;
+    unsigned char  fat_loaded;
+    unsigned short fat_cache[512 * 128];
+} fat_fs_t;
+
+typedef struct {
+    char           name[13];
+    unsigned char  attr;
+    unsigned int   size;
+    unsigned short first_cluster;
+} file_info_t;
+
+typedef struct {
+    char           name[13];
+    unsigned int   size;
+    unsigned short first_cluster;
+    unsigned short current_cluster;
+    unsigned int   current_offset;
+    unsigned int   cluster_offset;
+    unsigned char  is_open;
+} file_handle_t;
+
+int fat_init(void);
+int fat_list_root(void (*callback)(const file_info_t*));
+int fat_find(const char* name, file_info_t* info);
+file_handle_t* fat_open(const char* name);
+int fat_read(file_handle_t* handle, unsigned char* buf, unsigned int size);
+void fat_close(file_handle_t* handle);
+void fat_debug(void);
+
+extern fat_fs_t g_fs;
+
+#endif
+
+============================================================
+[port.h]
+============================================================
+
+#ifndef PORT_H
+#define PORT_H
+
+static inline void outb(unsigned short port, unsigned char value)
+{
+    __asm__ volatile("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline unsigned char inb(unsigned short port)
+{
+    unsigned char value;
+    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+static inline unsigned short inw(unsigned short port)
+{
+    unsigned short value;
+    __asm__ volatile("inw %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+static inline void outw(unsigned short port, unsigned short value)
+{
+    __asm__ volatile("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+
+#endif
+
+============================================================
+[scancode.h]
+============================================================
+
+#ifndef SCANCODE_H
+#define SCANCODE_H
+
+// 按下扫描码
+#define SC_ESC          0x01
+#define SC_1            0x02
+#define SC_2            0x03
+#define SC_3            0x04
+#define SC_4            0x05
+#define SC_5            0x06
+#define SC_6            0x07
+#define SC_7            0x08
+#define SC_8            0x09
+#define SC_9            0x0A
+#define SC_0            0x0B
+#define SC_MINUS        0x0C
+#define SC_EQUAL        0x0D
+#define SC_BACKSPACE    0x0E
+#define SC_TAB          0x0F
+#define SC_Q            0x10
+#define SC_W            0x11
+#define SC_E            0x12
+#define SC_R            0x13
+#define SC_T            0x14
+#define SC_Y            0x15
+#define SC_U            0x16
+#define SC_I            0x17
+#define SC_O            0x18
+#define SC_P            0x19
+#define SC_LBRACKET     0x1A
+#define SC_RBRACKET     0x1B
+#define SC_ENTER        0x1C
+#define SC_LCTRL        0x1D
+#define SC_A            0x1E
+#define SC_S            0x1F
+#define SC_D            0x20
+#define SC_F            0x21
+#define SC_G            0x22
+#define SC_H            0x23
+#define SC_J            0x24
+#define SC_K            0x25
+#define SC_L            0x26
+#define SC_SEMICOLON    0x27
+#define SC_QUOTE        0x28
+#define SC_BACKTICK     0x29
+#define SC_LSHIFT       0x2A
+#define SC_BACKSLASH    0x2B
+#define SC_Z            0x2C
+#define SC_X            0x2D
+#define SC_C            0x2E
+#define SC_V            0x2F
+#define SC_B            0x30
+#define SC_N            0x31
+#define SC_M            0x32
+#define SC_COMMA        0x33
+#define SC_DOT          0x34
+#define SC_SLASH        0x35
+#define SC_RSHIFT       0x36
+#define SC_KP_STAR      0x37
+#define SC_LALT         0x38
+#define SC_SPACE        0x39
+#define SC_CAPSLOCK     0x3A
+#define SC_F1           0x3B
+#define SC_F2           0x3C
+#define SC_F3           0x3D
+#define SC_F4           0x3E
+#define SC_F5           0x3F
+#define SC_F6           0x40
+#define SC_F7           0x41
+#define SC_F8           0x42
+#define SC_F9           0x43
+#define SC_F10          0x44
+#define SC_NUMLOCK      0x45
+#define SC_SCROLLLOCK   0x46
+#define SC_KP_7         0x47
+#define SC_KP_8         0x48
+#define SC_KP_9         0x49
+#define SC_KP_MINUS     0x4A
+#define SC_KP_4         0x4B
+#define SC_KP_5         0x4C
+#define SC_KP_6         0x4D
+#define SC_KP_PLUS      0x4E
+#define SC_KP_1         0x4F
+#define SC_KP_2         0x50
+#define SC_KP_3         0x51
+#define SC_KP_0         0x52
+#define SC_KP_DOT       0x53
+#define SC_F11          0x57
+#define SC_F12          0x58
+#define SC_LWIN         0x5B
+#define SC_RWIN         0x5C
+#define SC_EXTENDED     0xE0
+
+// 释放扫描码（按下码 | 0x80）
+#define SC_RELEASE_MASK 0x80
+
+#define SC_RELEASE_CTRL    0x9D
+#define SC_RELEASE_ALT     0xB8
+#define SC_RELEASE_LSHIFT  0xAA
+#define SC_RELEASE_RSHIFT  0xB6
+
+// 扩展键释放码（需要 E0 前缀）
+#define SC_EXT_UP     0x48
+#define SC_EXT_DOWN   0x50
+#define SC_EXT_LEFT   0x4B
+#define SC_EXT_RIGHT  0x4D
+
+#endif
+
+============================================================
+[vga.h]
+============================================================
+
+#ifndef VGA_H
+#define VGA_H
+
+#define VGA_BUFFER   0xB8000
+#define VGA_WIDTH    80
+#define VGA_HEIGHT   25
+
+#define COLOR_WHITE_ON_BLUE   0x1F
+#define COLOR_WHITE_ON_BLACK  0x0F
+#define COLOR_GREEN_ON_BLACK  0x0A
+#define COLOR_RED_ON_BLACK    0x0C
+#define COLOR_WHITE_ON_RED    0x4F
+#define COLOR_BLACK_ON_WHITE  0x70
+
+// 画框字符
+#define BOX_TL  0xC9
+#define BOX_TR  0xBB
+#define BOX_BL  0xC8
+#define BOX_BR  0xBC
+#define BOX_HZ  0xCD
+#define BOX_VT  0xBA
+
+static inline void vga_put_char(int x, int y, unsigned char c, unsigned char attr)
+{
+    volatile unsigned short *vga = (volatile unsigned short *)VGA_BUFFER;
+    if (x >= 0 && x < VGA_WIDTH && y >= 0 && y < VGA_HEIGHT) {
+        vga[y * VGA_WIDTH + x] = (attr << 8) | c;
+    }
+}
+
+static inline unsigned short vga_get_char(int x, int y)
+{
+    volatile unsigned short *vga = (volatile unsigned short *)VGA_BUFFER;
+    if (x >= 0 && x < VGA_WIDTH && y >= 0 && y < VGA_HEIGHT) {
+        return vga[y * VGA_WIDTH + x];
+    }
+    return 0;
+}
+
+static inline void vga_fill(unsigned char c, unsigned char attr)
+{
+    volatile unsigned short *vga = (volatile unsigned short *)VGA_BUFFER;
+    unsigned short val = (attr << 8) | c;
+    for (int i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++) {
+        vga[i] = val;
+    }
+}
+
+static void vga_print(int x, int y, const char *str, unsigned char attr)
+{
+    while (*str && x < VGA_WIDTH) {
+        vga_put_char(x++, y, *str++, attr);
+    }
+}
+
+#endif
+
+============================================================
+[编译.bat]
+============================================================
+
+@echo off
+chcp 65001 > nul
+title TairitsuOS 一键编译
+
+echo ======================================
+echo       TairitsuOS 一键编译脚本
+echo ======================================
+
+echo.
+echo [0/5] 清理旧文件...
+del *.o *.bin *.elf os.img pad.bin 2>nul
+echo [✓] 完成!
+
+echo.
+echo [1/5] 编译引导扇区...
+nasm -f bin boot.asm -o boot.bin
+if %errorlevel% neq 0 (echo [x] 失败！& pause & exit /b 1)
+echo [✓] 完成!
+
+echo.
+echo [2/5] 编译内核入口汇编...
+nasm -f elf32 kernel_entry.asm -o entry.o
+if %errorlevel% neq 0 (echo [x] 失败！& pause & exit /b 1)
+echo [✓] 完成!
+
+echo.
+echo [3/5] 编译C源文件...
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c except.c -o except.o
+if %errorlevel% neq 0 (echo [x] except.c 失败！& pause & exit /b 1)
+
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c keyboard.c -o keyboard.o
+if %errorlevel% neq 0 (echo [x] keyboard.c 失败！& pause & exit /b 1)
+
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c disk.c -o disk.o
+if %errorlevel% neq 0 (echo [x] disk.c 失败！& pause & exit /b 1)
+
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c syscall.c -o syscall.o
+if %errorlevel% neq 0 (echo [x] syscall.c 失败！& pause & exit /b 1)
+
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c fat.c -o fat.o
+if %errorlevel% neq 0 (echo [x] fat.c 失败！& pause & exit /b 1)
+
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c shell.c -o shell.o
+if %errorlevel% neq 0 (echo [x] shell.c 失败！& pause & exit /b 1)
+
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -Os -c kernel.c -o kernel.o
+if %errorlevel% neq 0 (echo [x] kernel.c 失败！& pause & exit /b 1)
+echo [✓] 完成!
+
+echo.
+echo [4/5] 链接内核...
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -T link.ld entry.o kernel.o except.o keyboard.o disk.o syscall.o fat.o shell.o -o kernel.elf
+if %errorlevel% neq 0 (echo [x] 链接失败！& pause & exit /b 1)
+echo [✓] 完成!
+
+echo.
+echo [5/5] 生成镜像...
+objcopy -O binary kernel.elf kernel.bin
+copy /b boot.bin + kernel.bin os.img > nul
+
+echo.
+echo 内核大小:
+for %%A in (kernel.bin) do echo   %%~zA 字节
+
+:: 检查镜像是否需要填充到 1.44MB
+set IMG_SIZE=0
+for %%A in (os.img) do set IMG_SIZE=%%~zA
+if %IMG_SIZE% LSS 1474560 (
+    set /a PAD_SIZE=1474560 - %IMG_SIZE%
+    fsutil file createnew pad.bin %PAD_SIZE% > nul 2>&1
+    copy /b os.img + pad.bin os.img /b > nul
+    del pad.bin > nul 2>&1
+    echo [✓] 镜像已填充到 1.44MB
+) else (
+    echo [✓] 镜像大小足够
+)
+
+del *.o *.elf 2>nul
+echo [✓] 完成！文件：os.img
+
+py source.py
+
+echo.
+echo ======================================
+echo   LOAD xxx.BIN ^| RUN
+echo   Ctrl+S Shell ^| Ctrl+Alt+Del 重启
+echo ======================================
+
+qemu-system-i386 -fda os.img -hda disk.img -vga std -boot order=a

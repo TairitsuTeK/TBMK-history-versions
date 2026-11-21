@@ -1,0 +1,39 @@
+tairitsutek@vmwarehost:~/T.M.B.K$ make
+  CC    kernel.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c kernel.c -o kernel.o
+In file included from kernel.c:9:
+vga.h:49:13: warning: ‘vga_print’ defined but not used [-Wunused-function]
+   49 | static void vga_print(int x, int y, const char *str, unsigned char attr)
+      |             ^~~~~~~~~
+  CC    except.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c except.c -o except.o
+  CC    keyboard.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c keyboard.c -o keyboard.o
+  CC    syscall.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c syscall.c -o syscall.o
+In file included from syscall.c:3:
+vga.h:49:13: warning: ‘vga_print’ defined but not used [-Wunused-function]
+   49 | static void vga_print(int x, int y, const char *str, unsigned char attr)
+      |             ^~~~~~~~~
+  NASM  boot/multiboot.asm
+nasm -f elf32 boot/multiboot.asm -o boot/multiboot.o
+  LD    iso/boot/kernel.elf
+ld -m elf_i386 -T link_grub.ld kernel.o except.o keyboard.o disk.o syscall.o fat.o shell.o boot/multiboot.o -o iso/boot/kernel.elf
+  ISO   tbmk_grub.iso
+grub-mkrescue -o tbmk_grub.iso iso/
+xorriso 1.5.6 : RockRidge filesystem manipulator, libburnia project.
+
+Drive current: -outdev 'stdio:tbmk_grub.iso'
+Media current: stdio file, overwriteable
+Media status : is blank
+Media summary: 0 sessions, 0 data blocks, 0 data, 78.8g free
+Added to ISO image: directory '/'='/tmp/grub.ce7HsY'
+xorriso : UPDATE :     317 files added in 1 seconds
+Added to ISO image: directory '/'='/home/tairitsutek/T.M.B.K/iso'
+xorriso : UPDATE :     321 files added in 1 seconds
+xorriso : NOTE : Copying to System Area: 512 bytes from file '/usr/lib/grub/i386-pc/boot_hybrid.img'
+ISO image produced: 2778 sectors
+Written to medium : 2778 sectors at LBA 0
+Writing to 'stdio:tbmk_grub.iso' completed successfully.
+
+

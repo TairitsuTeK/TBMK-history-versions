@@ -1,0 +1,216 @@
+tairitsutek@vmwarehost:~/T.M.B.K/Pixel Neko Next$ make run
+  CC    kernel.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c kernel.c -o kernel.o
+  CC    mouse.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c mouse.c -o mouse.o
+  CC    wm.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c wm.c -o wm.o
+wm.c: In function ‘ok_btn’:
+wm.c:43:12: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+   43 |            for(int x=bx;x<bx+32;x++)v[(by+11)*320+x]=15;for(int y=by;y<by+12;y++)v[y*320+bx+31]=15;
+      |            ^~~
+wm.c:43:57: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+   43 |            for(int x=bx;x<bx+32;x++)v[(by+11)*320+x]=15;for(int y=by;y<by+12;y++)v[y*320+bx+31]=15;
+      |                                                         ^~~
+wm.c:46:11: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+   46 |           for(int x=bx;x<bx+32;x++)v[(by+11)*320+x]=0;for(int y=by;y<by+12;y++)v[y*320+bx+31]=0;
+      |           ^~~
+wm.c:46:55: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+   46 |           for(int x=bx;x<bx+32;x++)v[(by+11)*320+x]=0;for(int y=by;y<by+12;y++)v[y*320+bx+31]=0;
+      |                                                       ^~~
+wm.c: In function ‘cl_btn’:
+wm.c:54:12: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+   54 |            for(int x=cx;x<cx+16;x++)v[(cy+11)*320+x]=15;for(int y=cy;y<cy+12;y++)v[y*320+cx+15]=15;
+      |            ^~~
+wm.c:54:57: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+   54 |            for(int x=cx;x<cx+16;x++)v[(cy+11)*320+x]=15;for(int y=cy;y<cy+12;y++)v[y*320+cx+15]=15;
+      |                                                         ^~~
+wm.c:59:11: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+   59 |           for(int x=cx;x<cx+16;x++)v[(cy+11)*320+x]=0;for(int y=cy;y<cy+12;y++)v[y*320+cx+15]=0;
+      |           ^~~
+wm.c:59:55: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+   59 |           for(int x=cx;x<cx+16;x++)v[(cy+11)*320+x]=0;for(int y=cy;y<cy+12;y++)v[y*320+cx+15]=0;
+      |                                                       ^~~
+wm.c: In function ‘mi_btn’:
+wm.c:69:12: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+   69 |            for(int x=mx;x<mx+16;x++)v[(my+11)*320+x]=15;for(int y=my;y<my+12;y++)v[y*320+mx+15]=15;
+      |            ^~~
+wm.c:69:57: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+   69 |            for(int x=mx;x<mx+16;x++)v[(my+11)*320+x]=15;for(int y=my;y<my+12;y++)v[y*320+mx+15]=15;
+      |                                                         ^~~
+wm.c:72:11: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+   72 |           for(int x=mx;x<mx+16;x++)v[(my+11)*320+x]=0;for(int y=my;y<my+12;y++)v[y*320+mx+15]=0;
+      |           ^~~
+wm.c:72:55: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+   72 |           for(int x=mx;x<mx+16;x++)v[(my+11)*320+x]=0;for(int y=my;y<my+12;y++)v[y*320+mx+15]=0;
+      |                                                       ^~~
+wm.c: In function ‘taskbar’:
+wm.c:106:5: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  106 |     for(int x=0;x<320;x++)v[0*320+x]=15;for(int y=0;y<18;y++)v[y*320+0]=15;
+      |     ^~~
+wm.c:106:41: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  106 |     for(int x=0;x<320;x++)v[0*320+x]=15;for(int y=0;y<18;y++)v[y*320+0]=15;
+      |                                         ^~~
+wm.c:107:5: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  107 |     for(int x=0;x<320;x++)v[17*320+x]=0;for(int y=0;y<18;y++)v[y*320+319]=0;
+      |     ^~~
+wm.c:107:41: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  107 |     for(int x=0;x<320;x++)v[17*320+x]=0;for(int y=0;y<18;y++)v[y*320+319]=0;
+      |                                         ^~~
+wm.c:114:5: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  114 |     for(int x=rx;x<rx+16;x++)v[ry*320+x]=12;for(int y=ry;y<ry+16;y++)v[y*320+rx]=12;
+      |     ^~~
+wm.c:114:45: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  114 |     for(int x=rx;x<rx+16;x++)v[ry*320+x]=12;for(int y=ry;y<ry+16;y++)v[y*320+rx]=12;
+      |                                             ^~~
+wm.c:115:5: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  115 |     for(int x=rx;x<rx+16;x++)v[(ry+15)*320+x]=0;for(int y=ry;y<ry+16;y++)v[y*320+rx+15]=0;
+      |     ^~~
+wm.c:115:49: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  115 |     for(int x=rx;x<rx+16;x++)v[(ry+15)*320+x]=0;for(int y=ry;y<ry+16;y++)v[y*320+rx+15]=0;
+      |                                                 ^~~
+wm.c: In function ‘icon’:
+wm.c:159:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  159 |         for(int j=x;j<x+16;j++)v[y*320+j]=11;for(int i=y;i<y+16;i++)v[i*320+x]=11;
+      |         ^~~
+wm.c:159:46: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  159 |         for(int j=x;j<x+16;j++)v[y*320+j]=11;for(int i=y;i<y+16;i++)v[i*320+x]=11;
+      |                                              ^~~
+wm.c:160:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  160 |         for(int j=x;j<x+16;j++)v[(y+15)*320+j]=1;for(int i=y;i<y+16;i++)v[i*320+x+15]=1;
+      |         ^~~
+wm.c:160:50: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  160 |         for(int j=x;j<x+16;j++)v[(y+15)*320+j]=1;for(int i=y;i<y+16;i++)v[i*320+x+15]=1;
+      |                                                  ^~~
+wm.c:174:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  174 |         for(int j=x;j<x+16;j++)v[y*320+j]=15;for(int i=y;i<y+16;i++)v[i*320+x]=15;
+      |         ^~~
+wm.c:174:46: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  174 |         for(int j=x;j<x+16;j++)v[y*320+j]=15;for(int i=y;i<y+16;i++)v[i*320+x]=15;
+      |                                              ^~~
+wm.c:175:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  175 |         for(int j=x;j<x+16;j++)v[(y+15)*320+j]=0;for(int i=y;i<y+16;i++)v[i*320+x+15]=0;
+      |         ^~~
+wm.c:175:50: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  175 |         for(int j=x;j<x+16;j++)v[(y+15)*320+j]=0;for(int i=y;i<y+16;i++)v[i*320+x+15]=0;
+      |                                                  ^~~
+wm.c: In function ‘draw_restart_dialog’:
+wm.c:216:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  216 |         for(int x=bx;x<bx+55;x++)v[(by+11)*320+x]=0;for(int y=by;y<by+12;y++)v[y*320+bx+54]=0;
+      |         ^~~
+wm.c:216:53: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  216 |         for(int x=bx;x<bx+55;x++)v[(by+11)*320+x]=0;for(int y=by;y<by+12;y++)v[y*320+bx+54]=0;
+      |                                                     ^~~
+wm.c:219:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  219 |         for(int x=bx;x<bx+55;x++)v[(by+11)*320+x]=15;for(int y=by;y<by+12;y++)v[y*320+bx+54]=15;
+      |         ^~~
+wm.c:219:54: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  219 |         for(int x=bx;x<bx+55;x++)v[(by+11)*320+x]=15;for(int y=by;y<by+12;y++)v[y*320+bx+54]=15;
+      |                                                      ^~~
+wm.c:224:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  224 |         for(int x=rx;x<rx+55;x++)v[(ry+11)*320+x]=0;for(int y=ry;y<ry+12;y++)v[y*320+rx+54]=0;
+      |         ^~~
+wm.c:224:53: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  224 |         for(int x=rx;x<rx+55;x++)v[(ry+11)*320+x]=0;for(int y=ry;y<ry+12;y++)v[y*320+rx+54]=0;
+      |                                                     ^~~
+wm.c:227:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  227 |         for(int x=rx;x<rx+55;x++)v[(ry+11)*320+x]=12;for(int y=ry;y<ry+12;y++)v[y*320+rx+54]=12;
+      |         ^~~
+wm.c:227:54: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  227 |         for(int x=rx;x<rx+55;x++)v[(ry+11)*320+x]=12;for(int y=ry;y<ry+12;y++)v[y*320+rx+54]=12;
+      |                                                      ^~~
+wm.c: In function ‘wm_update’:
+wm.c:311:9: warning: this ‘if’ clause does not guard... [-Wmisleading-indentation]
+  311 |         if(redraw) need_mr=1;return;
+      |         ^~
+wm.c:311:30: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘if’
+  311 |         if(redraw) need_mr=1;return;
+      |                              ^~~~~~
+wm.c:318:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  318 |         for(int x=rx;x<rx+16;x++)v[ry*320+x]=0;for(int y=ry;y<ry+16;y++)v[y*320+rx]=0;
+      |         ^~~
+wm.c:318:48: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  318 |         for(int x=rx;x<rx+16;x++)v[ry*320+x]=0;for(int y=ry;y<ry+16;y++)v[y*320+rx]=0;
+      |                                                ^~~
+wm.c:319:9: warning: this ‘for’ clause does not guard... [-Wmisleading-indentation]
+  319 |         for(int x=rx;x<rx+16;x++)v[(ry+15)*320+x]=12;for(int y=ry;y<ry+16;y++)v[y*320+rx+15]=12;
+      |         ^~~
+wm.c:319:54: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘for’
+  319 |         for(int x=rx;x<rx+16;x++)v[(ry+15)*320+x]=12;for(int y=ry;y<ry+16;y++)v[y*320+rx+15]=12;
+      |                                                      ^~~
+wm.c:383:9: warning: this ‘else’ clause does not guard... [-Wmisleading-indentation]
+  383 |         else if(miw==3){clm=1;clv=0;clsx=wcx;clsy=wcy;}else{cpm=1;cpv=0;cpsx=cpx;cpsy=cpy;}redraw=1;mip=0;}
+      |         ^~~~
+wm.c:383:92: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘else’
+  383 | lv=0;clsx=wcx;clsy=wcy;}else{cpm=1;cpv=0;cpsx=cpx;cpsy=cpy;}redraw=1;mip=0;}
+      |                                                             ^~~~~~
+wm.c:414:13: warning: this ‘if’ clause does not guard... [-Wmisleading-indentation]
+  414 |             if(nwx<0)nwx=0;if(nwy<0)nwy=0;if(nwx+nww>320)nwx=320-nww;if(nwy+nwh>200)nwy=200-nwh;
+      |             ^~
+wm.c:414:28: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘if’
+  414 |             if(nwx<0)nwx=0;if(nwy<0)nwy=0;if(nwx+nww>320)nwx=320-nww;if(nwy+nwh>200)nwy=200-nwh;
+      |                            ^~
+  CC    font.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c font.c -o font.o
+  CC    calc.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c calc.c -o calc.o
+calc.c: In function ‘calc_draw’:
+calc.c:62:62: warning: unused parameter ‘wh’ [-Wunused-parameter]
+   62 | void calc_draw(unsigned char* v, int wx, int wy, int ww, int wh)
+      |                                                          ~~~~^~
+calc.c: In function ‘calc_click’:
+calc.c:89:32: warning: unused parameter ‘v’ [-Wunused-parameter]
+   89 | void calc_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh)
+      |                 ~~~~~~~~~~~~~~~^
+calc.c:89:79: warning: unused parameter ‘wh’ [-Wunused-parameter]
+   89 | click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh)
+      |                                                                 ~~~~^~
+  CC    cpanel.c
+gcc -m32 -ffreestanding -nostdlib -nostartfiles -fno-builtin -fno-stack-protector -fno-pie -mno-mmx -mno-sse -mno-sse2 -Os -Wall -Wextra -I. -c cpanel.c -o cpanel.o
+cpanel.c: In function ‘cpanel_draw’:
+cpanel.c:12:56: warning: unused parameter ‘ww’ [-Wunused-parameter]
+   12 | void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
+      |                                                    ~~~~^~
+cpanel.c:12:64: warning: unused parameter ‘wh’ [-Wunused-parameter]
+   12 | void cpanel_draw(unsigned char* v, int wx, int wy, int ww, int wh)
+      |                                                            ~~~~^~
+cpanel.c: In function ‘cpanel_click’:
+cpanel.c:39:9: warning: this ‘if’ clause does not guard... [-Wmisleading-indentation]
+   39 |         if(nv<0)nv=0; if(nv>4)nv=4;
+      |         ^~
+cpanel.c:39:23: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘if’
+   39 |         if(nv<0)nv=0; if(nv>4)nv=4;
+      |                       ^~
+cpanel.c:34:34: warning: unused parameter ‘v’ [-Wunused-parameter]
+   34 | void cpanel_click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh)
+      |                   ~~~~~~~~~~~~~~~^
+cpanel.c:34:73: warning: unused parameter ‘ww’ [-Wunused-parameter]
+   34 | click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh)
+      |                                                         ~~~~^~
+cpanel.c:34:81: warning: unused parameter ‘wh’ [-Wunused-parameter]
+   34 | click(unsigned char* v, int mx, int my, int wx, int wy, int ww, int wh)
+      |                                                                 ~~~~^~
+  NASM  boot/multiboot.asm
+nasm -f elf32 boot/multiboot.asm -o boot/multiboot.o
+  LD    iso/boot/kernel.elf
+ld -m elf_i386 -T link_grub.ld kernel.o mouse.o wm.o font.o calc.o cpanel.o boot/multiboot.o -o iso/boot/kernel.elf
+  ISO   pixel_neko.iso
+grub-mkrescue -o pixel_neko.iso iso/
+xorriso 1.5.6 : RockRidge filesystem manipulator, libburnia project.
+
+Drive current: -outdev 'stdio:pixel_neko.iso'
+Media current: stdio file, overwriteable
+Media status : is blank
+Media summary: 0 sessions, 0 data blocks, 0 data, 78.5g free
+Added to ISO image: directory '/'='/tmp/grub.Do611D'
+xorriso : UPDATE :     317 files added in 1 seconds
+Added to ISO image: directory '/'='/home/tairitsutek/T.M.B.K/Pixel Neko Next/iso'
+xorriso : UPDATE :     321 files added in 1 seconds
+xorriso : NOTE : Copying to System Area: 512 bytes from file '/usr/lib/grub/i386-pc/boot_hybrid.img'
+ISO image produced: 2781 sectors
+Written to medium : 2781 sectors at LBA 0
+Writing to 'stdio:pixel_neko.iso' completed successfully.
+
+qemu-system-i386 -cdrom pixel_neko.iso -m 128M
+tairitsutek@vmwarehost:~/T.M.B.K/Pixel Neko Next$ 
+
